@@ -1,0 +1,58 @@
+## Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+publish/
+dist/
+recovery/
+*.bak
+
+## Visual Studio & VS Code
+.vs/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.user
+*.userosscache
+*.sln.docstates
+*.suo
+
+## User-specific files
+*.rsuser
+*.suo
+*.user
+*.userprefs
+
+## Package files
+*.nupkg
+*.snupkg
+*.nuget.props
+*.nuget.targets
+
+## Dotnet tooling
+.dotnet/
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+## OS generated files
+Thumbs.db
+[Ee]xthumbs.db
+ehthumbs.db
+ehthumbs_vista.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+.DS_Store
+

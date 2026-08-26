@@ -1,0 +1,29 @@
+namespace ZSnaper.Models;
+
+public enum LucideIcon
+{
+    Camera,
+    FileText,
+    Keyboard,
+    Sliders,
+    Info,
+    Sun,
+    Moon,
+    Copy,
+    Folder,
+    Sparkles,
+    Palette,
+    Zap,
+    ShieldCheck,
+    Minus,
+    Check,
+    RotateCcw,
+    MousePointer2,
+    PenLine,
+    ArrowUpRight,
+    Type,
+    Grid3X3,
+    Undo2,
+    Power,
+    X
+}
