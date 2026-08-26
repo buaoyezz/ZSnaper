@@ -2,7 +2,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/logo/icon-dark.svg">
-    <img src="assets/logo/icon-light.svg" alt="ZSnaper Logo" width="25%" />
+    <img src="assets/logo/icon-light.svg" alt="ZSnaper Logo" width="15%" />
   </picture>
 </p>
 
