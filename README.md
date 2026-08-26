@@ -17,7 +17,6 @@
 </p>
 
 <p align="center">
-  <a href="#快捷键">快捷键</a> ·
   <a href="#构建">构建</a> ·
   <a href="#配置">配置</a> ·
   <a href="#许可证">许可证</a>
@@ -38,20 +37,6 @@
 <p align="center">
   <img src="assets/banner.png" alt="ZSnaper — Windows screenshot and offline OCR" width="100%" />
 </p>
-
-## 默认快捷键
-
-| 快捷键 | 操作 |
-| :--- | :--- |
-| `Alt + Q` | 启动截图 |
-| `Alt + X` | 启动截图并识别文字 |
-| `Enter` | 完成当前截图 |
-| `Ctrl + C` | 复制截图或识别文本 |
-| `Ctrl + S` | 保存截图 |
-| `Ctrl + Z` | 撤销上一步标注 |
-| `R` | 重置选区 |
-| `~` | 切换是否包含鼠标指针 |
-| `Esc` | 取消截图或关闭结果窗口 |
 
 ## 构建项目
 

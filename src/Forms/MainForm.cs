@@ -1195,10 +1195,6 @@ public class MainForm : Form
     {
         var panel = CreateBasePage();
         int contentWidth = panel.Width - 16;
-        Version? assemblyVersion = typeof(MainForm).Assembly.GetName().Version;
-        string version = assemblyVersion is null
-            ? "0.1.0"
-            : $"{assemblyVersion.Major}.{assemblyVersion.Minor}.{assemblyVersion.Build}";
 
         var titleLabel = new Label
         {
@@ -1211,8 +1207,8 @@ public class MainForm : Form
         var brandSurface = new Panel
         {
             BackColor = Color.Transparent,
-            Location = new Point(0, 42),
-            Size = new Size(contentWidth, 88),
+            Location = new Point(0, 36),
+            Size = new Size(contentWidth, 70),
             Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
         };
         brandSurface.Paint += (_, e) =>
@@ -1220,8 +1216,8 @@ public class MainForm : Form
             LogoRenderer.DrawFullBrandLogo(
                 e.Graphics,
                 0f,
-                14f,
-                58f,
+                8f,
+                50f,
                 ThemeManager.Palette.TextPrimary,
                 ThemeManager.Palette.TextPrimary);
         };
@@ -1229,9 +1225,9 @@ public class MainForm : Form
         var productLabel = new Label
         {
             Text = "Powered By ZZBuAoYe",
-            Font = new Font("Microsoft YaHei UI", 8.8f, FontStyle.Regular),
-            Location = new Point(1, 132),
-            Size = new Size(contentWidth, 22),
+            Font = new Font("Microsoft YaHei UI", 8.5f, FontStyle.Regular),
+            Location = new Point(1, 110),
+            Size = new Size(contentWidth, 20),
             Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
             TextAlign = ContentAlignment.MiddleLeft
         };
@@ -1239,7 +1235,7 @@ public class MainForm : Form
         var separator = new Panel
         {
             BackColor = Color.Transparent,
-            Location = new Point(0, 169),
+            Location = new Point(0, 136),
             Size = new Size(contentWidth, 1),
             Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
         };
@@ -1249,73 +1245,60 @@ public class MainForm : Form
             e.Graphics.DrawLine(pen, 0, 0, separator.Width, 0);
         };
 
-        var versionCaption = new Label
+        var infoItems = new List<(string Caption, string Value)>();
+        infoItems.Add(("VERSION", AppVersionInfo.DisplayVersion));
+        if (AppVersionInfo.ShowChannel)
         {
-            Text = "VERSION",
-            Font = new Font("Microsoft YaHei UI", 8.5f, FontStyle.Regular),
-            Location = new Point(1, 191),
-            Size = new Size(86, 22),
-            TextAlign = ContentAlignment.MiddleLeft
-        };
+            infoItems.Add(("CHANNEL", AppVersionInfo.Channel));
+        }
+        infoItems.Add(("BUILD NUMBER", AppVersionInfo.BuildNumber));
+        infoItems.Add(("BUILD DATE", AppVersionInfo.BuildDate));
+        infoItems.Add(("BUILD COUNT", $"#{AppVersionInfo.BuildCount}"));
+        infoItems.Add(("PLATFORM", "Windows"));
+        infoItems.Add(("RUNTIME", ".NET 8"));
 
-        var versionValue = new Label
-        {
-            Text = version,
-            Font = new Font("Segoe UI", 8.5f, FontStyle.Regular),
-            Location = new Point(104, 191),
-            Size = new Size(contentWidth - 104, 22),
-            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
-            TextAlign = ContentAlignment.MiddleLeft
-        };
+        var captionLabels = new List<Label>();
+        var valueLabels = new List<Label>();
 
-        var platformCaption = new Label
-        {
-            Text = "PLATFORM",
-            Font = new Font("Microsoft YaHei UI", 8.5f, FontStyle.Regular),
-            Location = new Point(1, 225),
-            Size = new Size(86, 22),
-            TextAlign = ContentAlignment.MiddleLeft
-        };
+        int startY = 146;
+        int rowStep = 25;
 
-        var platformValue = new Label
+        for (int i = 0; i < infoItems.Count; i++)
         {
-            Text = "Windows",
-            Font = new Font("Segoe UI", 8.5f, FontStyle.Regular),
-            Location = new Point(104, 225),
-            Size = new Size(contentWidth - 104, 22),
-            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
-            TextAlign = ContentAlignment.MiddleLeft
-        };
+            int y = startY + i * rowStep;
+            var (caption, val) = infoItems[i];
 
-        var runtimeCaption = new Label
-        {
-            Text = "RUNTIME",
-            Font = new Font("Microsoft YaHei UI", 8.5f, FontStyle.Regular),
-            Location = new Point(1, 259),
-            Size = new Size(86, 22),
-            TextAlign = ContentAlignment.MiddleLeft
-        };
+            var capLabel = new Label
+            {
+                Text = caption,
+                Font = new Font("Microsoft YaHei UI", 8.2f, FontStyle.Regular),
+                Location = new Point(1, y),
+                Size = new Size(106, 20),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
 
-        var runtimeValue = new Label
-        {
-            Text = ".NET 8",
-            Font = new Font("Segoe UI", 8.5f, FontStyle.Regular),
-            Location = new Point(104, 259),
-            Size = new Size(contentWidth - 104, 22),
-            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
-            TextAlign = ContentAlignment.MiddleLeft
-        };
+            var valLabel = new Label
+            {
+                Text = val,
+                Font = new Font("Segoe UI", 8.5f, FontStyle.Regular),
+                Location = new Point(112, y),
+                Size = new Size(contentWidth - 112, 20),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+
+            captionLabels.Add(capLabel);
+            valueLabels.Add(valLabel);
+            panel.Controls.Add(capLabel);
+            panel.Controls.Add(valLabel);
+        }
 
         Action applyAboutTheme = () =>
         {
             titleLabel.ForeColor = ThemeManager.Palette.TextPrimary;
             productLabel.ForeColor = ThemeManager.Palette.TextMuted;
-            versionCaption.ForeColor = ThemeManager.Palette.TextMuted;
-            platformCaption.ForeColor = ThemeManager.Palette.TextMuted;
-            runtimeCaption.ForeColor = ThemeManager.Palette.TextMuted;
-            versionValue.ForeColor = ThemeManager.Palette.TextSecondary;
-            platformValue.ForeColor = ThemeManager.Palette.TextSecondary;
-            runtimeValue.ForeColor = ThemeManager.Palette.TextSecondary;
+            foreach (var cap in captionLabels) cap.ForeColor = ThemeManager.Palette.TextMuted;
+            foreach (var val in valueLabels) val.ForeColor = ThemeManager.Palette.TextSecondary;
             brandSurface.Invalidate();
             separator.Invalidate();
         };
@@ -1327,12 +1310,6 @@ public class MainForm : Form
         panel.Controls.Add(brandSurface);
         panel.Controls.Add(productLabel);
         panel.Controls.Add(separator);
-        panel.Controls.Add(versionCaption);
-        panel.Controls.Add(versionValue);
-        panel.Controls.Add(platformCaption);
-        panel.Controls.Add(platformValue);
-        panel.Controls.Add(runtimeCaption);
-        panel.Controls.Add(runtimeValue);
 
         return panel;
     }
