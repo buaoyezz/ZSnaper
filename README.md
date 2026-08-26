@@ -17,9 +17,9 @@
 </p>
 
 <p align="center">
-  <a href="#构建">构建</a> ·
-  <a href="#配置">配置</a> ·
-  <a href="#许可证">许可证</a>
+  <a href="#构建项目">构建</a> ·
+  <a href="#相关配置">配置</a> ·
+  <a href="#许可证">许可</a>
 </p>
 
 <p align="center">
