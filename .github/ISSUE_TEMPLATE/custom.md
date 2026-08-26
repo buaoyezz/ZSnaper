@@ -1,10 +1,31 @@
----
-name: Custom issue template
-about: Describe this issue template's purpose here.
-title: ''
-labels: ''
-assignees: ''
+﻿---
+name: "🙋 社区求助与提问 (Question & Help)"
+about: "在使用 ZSnaper 时遇到操作疑问、需要配置协助或技术探讨"
+title: "[HELP] "
+labels: "question, help wanted"
+assignees: "buaoyezz"
 
 ---
 
+### ❓ 遇到的问题或疑问
+请详细描述您遇到的疑问、使用困惑或希望寻求协助的具体内容：
 
+---
+
+### 🔍 已经尝试过的排查步骤
+为了便于大家快速帮助您，请说明您已经做过的尝试：
+- [ ] 是否已阅读过项目的 [README.md](README.md) 说明？
+- [ ] 是否已检查过 Windows OCR 本地语言包已正常安装？
+- [ ] 其他尝试：
+
+---
+
+### 💻 您的运行环境（如涉及软件行为）
+- **ZSnaper 版本**：[例如：v0.0.1-alpha]
+- **操作系统版本**：[例如：Windows 11 / Windows 10]
+- **相关配置**：[例如：多屏幕环境 / 特殊快捷键]
+
+---
+
+### 🤝 期望获得的协助
+您希望获得哪种形式的解答或支持（例如：操作解答 / 源码指导 / 配置示例）：
