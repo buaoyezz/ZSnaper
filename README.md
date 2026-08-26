@@ -28,7 +28,7 @@
   <img src="https://img.shields.io/badge/C%23-12-239120?logo=csharp&logoColor=white" alt="C# 12" />
   <img src="https://img.shields.io/badge/Platform-Windows%2010%2B-0078D6?logo=windows&logoColor=white" alt="Windows 10+" />
   <a href="#隐私"><img src="https://img.shields.io/badge/OCR-100%25%20Offline-success?logo=shield" alt="100% Offline" /></a>
-  <a href="https://github.com/ZZBuAoYe/ZSnaper/releases"><img src="https://img.shields.io/github/v/release/ZZBuAoYe/ZSnaper?color=orange&label=Version" alt="Latest Release" /></a>
+  <a href="https://github.com/buaoyezz/ZSnaper/releases"><img src="https://img.shields.io/github/v/release/buaoyezz/ZSnaper?color=orange&label=Version" alt="Latest Release" /></a>
 </p>
 
 `ZSnaper` 是一款面向 Windows 的轻量截图工具并基于`Windows.Media.Ocr`提供本地离线的快速 OCR 能力,我们将智能选区、图像标注和文字识别放在了一个功能栏，
