@@ -1,4 +1,4 @@
-﻿namespace ZSnaper.Helpers;
+namespace ZSnaper.Helpers;
 
 /// <summary>
 /// 应用程序版本与构建信息
@@ -8,7 +8,7 @@ public static class AppVersionInfo
     /// <summary>
     /// 软件版本号
     /// </summary>
-    public const string Version = "0.1ALPHA";
+    public const string Version = "0.0.1";
 
     /// <summary>
     /// 发布通道 (Alpha, Beta, Release)
