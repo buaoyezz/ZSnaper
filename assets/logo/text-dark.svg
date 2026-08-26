@@ -1,11 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 120" role="img" aria-labelledby="title desc">
+﻿<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 120" role="img" aria-labelledby="title desc">
   <title id="title">ZSnaper wordmark</title>
   <desc id="desc">Bold text-only ZSnaper wordmark using stylized characters.</desc>
   <text x="320" y="82"
         text-anchor="middle"
-        fill="#000000"
+        fill="#FFFFFF"
         font-family="'Segoe UI', 'Noto Sans', Arial, sans-serif"
         font-size="72"
         font-weight="700"
-        letter-spacing="2">ZƧNΛPΞR</text>
+        letter-spacing="2">ZSNΛPΞR</text>
 </svg>

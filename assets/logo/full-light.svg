@@ -1,8 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 132" role="img" aria-labelledby="title desc">
+﻿<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 132" role="img" aria-labelledby="title desc">
   <title id="title">ZSnaper aligned logo</title>
-  <desc id="desc">ZSnaper geometric bird and bold wordmark. The bird is raised higher than the wordmark for a stronger visual balance.</desc>
-
-  <!-- Geometric bird. The bird is shifted upward by 10px relative to the previous aligned version. -->
+  <desc id="desc">ZSnaper geometric bird and bold wordmark.</desc>
   <g fill="#000000" transform="translate(14 -5.576) scale(0.95)">
     <path d="M22 10 L25 58 L50 83 L71 60 Z"/>
     <path id="head" d="M96 40 L76 61 L97 82 Z"/>
@@ -11,12 +9,10 @@
     <path d="M15 89 L34 108 L53 90 Z"/>
     <path d="M95 89 L57 89 L57 127 Z"/>
   </g>
-
-  <!-- Wordmark -->
   <text id="wordmark" x="154" y="96"
         fill="#000000"
-        font-family="'Noto Sans', sans-serif"
+        font-family="'Segoe UI', 'Noto Sans', Arial, sans-serif"
         font-size="74"
         font-weight="700"
-        letter-spacing="1.5">ZSNΛPΞR</text>
+        letter-spacing="2">ZSNΛPΞR</text>
 </svg>

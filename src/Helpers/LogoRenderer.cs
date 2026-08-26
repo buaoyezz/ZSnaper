@@ -5,7 +5,7 @@ namespace ZSnaper.Helpers;
 public static class LogoRenderer
 {
     /// <summary>
-    /// 直接根据 assets/logo/ZSnaper.svg 的矢量多边形数据，高精度绘制品牌 Logo（无需背景底色框）
+    /// 直接根据 assets/logo/icon-light.svg 的矢量多边形数据，高精度绘制品牌 Logo（无需背景底色框）
     /// </summary>
     public static void DrawLogo(Graphics g, float x, float y, float size, Color color)
     {
@@ -43,7 +43,7 @@ public static class LogoRenderer
 
     /// <summary>
     /// Draws the geometric bird together with the wordmark from
-    /// assets/logo/ZSnaper_text.svg.
+    /// assets/logo/full-light.svg.
     /// </summary>
     public static void DrawFullBrandLogo(
         Graphics g,

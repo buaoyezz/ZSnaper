@@ -1,5 +1,5 @@
 param(
-    [string]$SourceSvg = (Join-Path (Split-Path $PSScriptRoot -Parent) 'assets\logo\ZSnaper.svg'),
+    [string]$SourceSvg = (Join-Path (Split-Path $PSScriptRoot -Parent) 'assets\logo\icon-light.svg'),
     [string]$OutputIco = (Join-Path (Split-Path $PSScriptRoot -Parent) 'assets\logo\ZSnaper.ico'),
     [string]$PreviewPng = '',
     [ValidateSet('Light', 'Dark')]
