@@ -1,75 +1,40 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 360" width="1200" height="360" fill="none">
-  <defs>
-    <style>
-      .brand-title {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-        font-size: 52px;
-        font-weight: 700;
-        letter-spacing: 4px;
-        fill: #0F172A;
-      }
-      .brand-sub {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
-        font-size: 18px;
-        font-weight: 400;
-        letter-spacing: 0.5px;
-        fill: #64748B;
-      }
-      .tag-text {
-        font-family: "Cascadia Code", "Consolas", "Segoe UI", monospace;
-        font-size: 13px;
-        font-weight: 500;
-        fill: #475569;
-      }
-    </style>
-  </defs>
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:xlink="http://www.w3.org/1999/xlink"
+     viewBox="0 0 2140 735"
+     width="2140"
+     height="735"
+     role="img"
+     aria-labelledby="title desc">
+  <title id="title">ZSnaper</title>
+  <desc id="desc">ZSnaper white wordmark on pure black above a real-use capture scene with a translucent toolbar.</desc>
 
-  <!-- Clean Background -->
-  <rect width="1200" height="360" fill="#FFFFFF" />
-  
-  <!-- Subtle Background Grid -->
-  <g opacity="0.4">
-    <line x1="0" y1="180" x2="1200" y2="180" stroke="#F1F5F9" stroke-width="1" />
-    <line x1="600" y1="0" x2="600" y2="360" stroke="#F1F5F9" stroke-width="1" />
+  <rect width="2140" height="735" fill="#000000"/>
+  <image href="banner-scene.png"
+         xlink:href="banner-scene.png"
+         x="0"
+         y="0"
+         width="2140"
+         height="735"
+         preserveAspectRatio="xMidYMid slice"/>
+
+  <!-- Keep the brand field absolutely clean while preserving the toolbar overlap below. -->
+  <rect x="0" y="0" width="2140" height="298" fill="#000000"/>
+
+  <!-- Repository-native geometric bird, rendered in white. -->
+  <g fill="#FFFFFF" transform="translate(758 71) scale(0.92) translate(-15 -10)">
+    <path d="M22 10 L25 58 L50 83 L71 60 Z"/>
+    <path d="M96 40 L76 61 L97 82 Z"/>
+    <path d="M100 42 L100 57 L114 57 Z"/>
+    <path d="M95 86 L74 64 L51 86 Z"/>
+    <path d="M15 89 L34 108 L53 90 Z"/>
+    <path d="M95 89 L57 89 L57 127 Z"/>
   </g>
 
-  <!-- Outer Frame -->
-  <rect x="1" y="1" width="1198" height="358" rx="8" fill="none" stroke="#E2E8F0" stroke-width="1" />
-
-  <!-- Center Content Block -->
-  <g transform="translate(600, 150)">
-    <!-- Logo and Wordmark Group -->
-    <g transform="translate(0, -35)">
-      <!-- Geometric Bird Logo -->
-      <g fill="#0F172A" transform="translate(-230, -56) scale(0.75)">
-        <path d="M22 10 L25 58 L50 83 L71 60 Z" fill="#10B981" />
-        <path d="M96 40 L76 61 L97 82 Z" fill="#0F172A" />
-        <path d="M100 42 L100 57 L114 57 Z" fill="#0F172A" />
-        <path d="M95 86 L74 64 L51 86 Z" fill="#0F172A" />
-        <path d="M15 89 L34 108 L53 90 Z" fill="#10B981" />
-        <path d="M95 89 L57 89 L57 127 Z" fill="#0F172A" />
-      </g>
-
-      <!-- Wordmark -->
-      <text x="-120" y="0" class="brand-title">ZSNΛPΞR</text>
-    </g>
-
-    <!-- Subtitle -->
-    <text x="0" y="32" text-anchor="middle" class="brand-sub">Windows 桌面截图与本地离线 OCR 工具</text>
-
-    <!-- Minimalist Spec Tags -->
-    <g transform="translate(-185, 68)">
-      <!-- Tag 1 -->
-      <rect x="0" y="0" width="96" height="28" rx="6" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1" />
-      <text x="48" y="18" text-anchor="middle" class="tag-text">.NET 8.0</text>
-
-      <!-- Tag 2 -->
-      <rect x="108" y="0" width="168" height="28" rx="6" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1" />
-      <text x="192" y="18" text-anchor="middle" class="tag-text">Windows.Media.Ocr</text>
-
-      <!-- Tag 3 -->
-      <rect x="288" y="0" width="82" height="28" rx="6" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1" />
-      <text x="329" y="18" text-anchor="middle" class="tag-text">WinForms</text>
-    </g>
-  </g>
+  <text x="894"
+        y="170"
+        fill="#FFFFFF"
+        font-family="'Segoe UI Variable Display', 'Segoe UI', 'Noto Sans', Arial, sans-serif"
+        font-size="82"
+        font-weight="700"
+        letter-spacing="2">ZSNΛPΞR</text>
 </svg>
