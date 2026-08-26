@@ -1,9 +1,9 @@
 ﻿---
-name: 🐛 Bug 报告 (Bug Report)
-about: 反馈 ZSnaper 运行中的错误、崩溃、识别异常或功能缺陷
-title: '[BUG] '
-labels: bug
-assignees: buaoyezz
+name: "🐛 Bug 报告 (Bug Report)"
+about: "反馈 ZSnaper 运行中的错误、崩溃、识别异常或功能缺陷"
+title: "[BUG] "
+labels: "bug"
+assignees: "buaoyezz"
 ---
 
 ### 📝 问题描述

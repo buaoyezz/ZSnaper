@@ -1,9 +1,9 @@
 ﻿---
-name: 🙋 社区求助与提问 (Question & Help)
-about: 在使用 ZSnaper 时遇到操作疑问、需要配置协助或技术探讨
-title: '[HELP] '
-labels: ["question", "help wanted"]
-assignees: buaoyezz
+name: "🙋 社区求助与提问 (Question & Help)"
+about: "在使用 ZSnaper 时遇到操作疑问、需要配置协助或技术探讨"
+title: "[HELP] "
+labels: "question, help wanted"
+assignees: "buaoyezz"
 ---
 
 ### ❓ 遇到的问题或疑问

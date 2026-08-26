@@ -1,9 +1,9 @@
 ﻿---
-name: 💡 体验与性能改进建议 (Improvement)
-about: 针对 ZSnaper 现有功能的交互体验、UI 细节、OCR 识别精度或性能优化的改进建议
-title: '[IMPROVE] '
-labels: enhancement
-assignees: buaoyezz
+name: "💡 体验与性能改进建议 (Improvement)"
+about: "针对 ZSnaper 现有功能的交互体验、UI 细节、OCR 识别精度或性能优化的改进建议"
+title: "[IMPROVE] "
+labels: "enhancement"
+assignees: "buaoyezz"
 ---
 
 ### 🎯 涉及的功能模块

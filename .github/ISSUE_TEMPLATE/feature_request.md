@@ -1,9 +1,9 @@
 ﻿---
-name: ✨ 新功能建议 (Feature Request)
-about: 为 ZSnaper 提出全新功能想法与能力提案
-title: '[FEAT] '
-labels: feature
-assignees: buaoyezz
+name: "✨ 新功能建议 (Feature Request)"
+about: "为 ZSnaper 提出全新功能想法与能力提案"
+title: "[FEAT] "
+labels: "feature"
+assignees: "buaoyezz"
 ---
 
 ### 🚀 需求背景与概述
