@@ -10,8 +10,11 @@ public sealed class HotkeyRecorder : Control
     private HotkeyGesture _gesture;
     private bool _isHovered;
     private bool _isRecording;
+    private bool _isForceRecording;
 
-    public Func<HotkeyGesture, HotkeyChangeResult>? TryCommit { get; set; }
+    public Func<HotkeyGesture, bool, HotkeyChangeResult>? TryCommit { get; set; }
+    public Func<bool, HotkeyChangeResult>? BeginRecordingRequest { get; set; }
+    public Func<HotkeyChangeResult>? EndRecordingRequest { get; set; }
 
     public event Action<HotkeyChangeResult>? Feedback;
 
@@ -24,6 +27,8 @@ public sealed class HotkeyRecorder : Control
             Invalidate();
         }
     }
+
+    public bool IsForceRecording => _isForceRecording;
 
     public HotkeyRecorder()
     {
@@ -50,7 +55,7 @@ public sealed class HotkeyRecorder : Control
     protected override void OnClick(EventArgs e)
     {
         base.OnClick(e);
-        BeginRecording();
+        StartRecording(forceBinding: false);
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
@@ -60,7 +65,7 @@ public sealed class HotkeyRecorder : Control
         {
             if (e.KeyCode is Keys.Enter or Keys.Space)
             {
-                BeginRecording();
+                StartRecording(forceBinding: false);
                 e.SuppressKeyPress = true;
             }
             return;
@@ -71,8 +76,10 @@ public sealed class HotkeyRecorder : Control
 
         if (e.KeyCode == Keys.Escape)
         {
-            CancelRecording();
-            Feedback?.Invoke(new HotkeyChangeResult(false, "已取消修改"));
+            HotkeyChangeResult endResult = CancelRecording();
+            Feedback?.Invoke(endResult.Success
+                ? new HotkeyChangeResult(false, "已取消修改")
+                : endResult);
             return;
         }
 
@@ -85,20 +92,11 @@ public sealed class HotkeyRecorder : Control
         HotkeyGesture proposed = HotkeyGesture.FromKeyEvent(e);
         if (!proposed.IsValid)
         {
-            Feedback?.Invoke(new HotkeyChangeResult(false, "请使用 Ctrl、Alt 或 Shift 组合键"));
+            Feedback?.Invoke(new HotkeyChangeResult(false, "请按下 PrintScreen，或使用 Ctrl、Alt、Shift 组合键"));
             return;
         }
 
-        HotkeyChangeResult result = TryCommit?.Invoke(proposed)
-            ?? new HotkeyChangeResult(false, "快捷键服务尚未就绪");
-        if (result.Success)
-        {
-            _gesture = proposed;
-        }
-
-        _isRecording = false;
-        Feedback?.Invoke(result);
-        Invalidate();
+        CommitGesture(proposed);
     }
 
     protected override void OnMouseEnter(EventArgs e)
@@ -124,7 +122,11 @@ public sealed class HotkeyRecorder : Control
     protected override void OnLostFocus(EventArgs e)
     {
         base.OnLostFocus(e);
-        CancelRecording();
+        HotkeyChangeResult endResult = CancelRecording();
+        if (!endResult.Success)
+        {
+            Feedback?.Invoke(endResult);
+        }
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -154,7 +156,9 @@ public sealed class HotkeyRecorder : Control
 
         Color contentColor = _isRecording ? palette.AccentColor : palette.TextPrimary;
         LucideRenderer.Draw(graphics, LucideIcon.Keyboard, 11, 9, 16, contentColor, 1.8f);
-        string displayText = _isRecording ? "请按组合键…" : _gesture.DisplayText;
+        string displayText = _isRecording
+            ? (_isForceRecording ? "请按强力按键…" : "请按按键…")
+            : _gesture.DisplayText;
         TextRenderer.DrawText(
             graphics,
             displayText,
@@ -164,22 +168,89 @@ public sealed class HotkeyRecorder : Control
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
     }
 
-    private void BeginRecording()
+    public void StartRecording(bool forceBinding)
     {
+        if (_isRecording)
+        {
+            return;
+        }
+
+        HotkeyChangeResult beginResult = BeginRecordingRequest?.Invoke(forceBinding)
+            ?? new HotkeyChangeResult(true, string.Empty);
+        if (!beginResult.Success)
+        {
+            Feedback?.Invoke(beginResult);
+            return;
+        }
+
         Focus();
         _isRecording = true;
-        Feedback?.Invoke(new HotkeyChangeResult(true, "请按下新的组合键，Esc 取消"));
+        _isForceRecording = forceBinding;
+        Feedback?.Invoke(new HotkeyChangeResult(
+            true,
+            forceBinding ? "请按下要强力绑定的按键或组合键，Esc 取消" : "请按下新的按键或组合键，Esc 取消"));
         Invalidate();
     }
 
-    private void CancelRecording()
+    public void CommitRecordedGesture(HotkeyGesture gesture)
+    {
+        if (_isRecording)
+        {
+            CommitGesture(gesture);
+        }
+    }
+
+    public void CancelExternalRecording()
     {
         if (!_isRecording)
         {
             return;
         }
 
-        _isRecording = false;
+        HotkeyChangeResult endResult = FinishRecording();
+        Feedback?.Invoke(endResult.Success
+            ? new HotkeyChangeResult(false, "已取消修改")
+            : endResult);
+    }
+
+    private HotkeyChangeResult CancelRecording()
+    {
+        if (!_isRecording)
+        {
+            return new HotkeyChangeResult(true, string.Empty);
+        }
+
+        HotkeyChangeResult result = FinishRecording();
         Invalidate();
+        return result;
+    }
+
+    private void CommitGesture(HotkeyGesture proposed)
+    {
+        HotkeyChangeResult result = TryCommit?.Invoke(proposed, _isForceRecording)
+            ?? new HotkeyChangeResult(false, "快捷键服务尚未就绪");
+        if (result.Success)
+        {
+            _gesture = proposed;
+        }
+
+        HotkeyChangeResult endResult = FinishRecording();
+        if (result.Success && !endResult.Success)
+        {
+            result = endResult;
+        }
+
+        Feedback?.Invoke(result);
+        Invalidate();
+    }
+
+    private HotkeyChangeResult FinishRecording()
+    {
+        _isRecording = false;
+        _isForceRecording = false;
+        HotkeyChangeResult result = EndRecordingRequest?.Invoke()
+            ?? new HotkeyChangeResult(true, string.Empty);
+        Invalidate();
+        return result;
     }
 }

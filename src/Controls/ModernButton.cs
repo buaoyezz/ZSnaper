@@ -50,6 +50,11 @@ public class ModernButton : Control
 
     public int IconGap { get; set; } = 7;
 
+    /// <summary>
+    /// 仅绘制图标，不绘制文字、按钮背景或边框。
+    /// </summary>
+    public bool IsIconOnly { get; set; }
+
     public ModernButton()
     {
         DoubleBuffered = true;
@@ -118,6 +123,24 @@ public class ModernButton : Control
         int pressedOffset = _isPressed ? 1 : 0;
         var rect = new Rectangle(0, pressedOffset, Width - 1, Height - 1 - pressedOffset);
         if (rect.Width <= 0 || rect.Height <= 0) return;
+
+        if (IsIconOnly)
+        {
+            if (_icon is LucideIcon iconOnly)
+            {
+                int iconSize = Math.Clamp(IconSize, 10, Math.Min(rect.Width, rect.Height));
+                Color iconColor = _isPressed
+                    ? palette.AccentColor
+                    : _isHovered
+                        ? palette.TextPrimary
+                        : palette.TextSecondary;
+                float iconX = rect.Left + (rect.Width - iconSize) / 2f;
+                float iconY = rect.Top + (rect.Height - iconSize) / 2f;
+                LucideRenderer.Draw(g, iconOnly, iconX, iconY, iconSize, iconColor, 1.8f);
+            }
+
+            return;
+        }
 
         using var path = GraphicsHelper.GetRoundedRectangle(rect, CornerRadius);
 

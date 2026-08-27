@@ -51,6 +51,8 @@ public class OverlayForm : Form
     private bool _showStyleBar;
     private bool _updatingStyleControls;
     private bool _inlineStyleControlsVisible;
+    private ScrollCaptureForm? _scrollCaptureForm;
+    private int _captureSessionVersion;
     private readonly System.Windows.Forms.Timer _inlineCaretTimer;
     private bool _inlineCaretVisible;
     private StyleSliderKind _activeStyleSlider;
@@ -61,6 +63,7 @@ public class OverlayForm : Form
     private int _styleBarRenderKey = int.MinValue;
 
     public event Action<Bitmap, Point, CaptureCompletionAction>? Captured;
+    public event Action<string>? CaptureFailed;
 
     public OverlayForm()
     {
@@ -92,6 +95,10 @@ public class OverlayForm : Form
 
     public void BeginCapture()
     {
+        _captureSessionVersion++;
+        _scrollCaptureForm?.CancelFromOwner();
+        _scrollCaptureForm = null;
+
         Rectangle virtualScreen = SystemInformation.VirtualScreen;
         Location = virtualScreen.Location;
         Size = virtualScreen.Size;
@@ -612,6 +619,9 @@ public class OverlayForm : Form
         _screen?.Dispose();
         DisposePixelatedScreens();
         _capturedCursor?.Dispose();
+        _captureSessionVersion++;
+        _scrollCaptureForm?.CancelFromOwner();
+        _scrollCaptureForm = null;
         _styleBarLayer.Dispose();
         base.OnFormClosed(e);
     }
@@ -649,6 +659,87 @@ public class OverlayForm : Form
         var screenPoint = new Point(Location.X + _selection.X, Location.Y + _selection.Y);
         Hide();
         Captured?.Invoke(crop, screenPoint, action);
+    }
+
+    private async void StartScrollCapture()
+    {
+        if (!_hasSelection || _screen is null || _scrollCaptureForm is not null) return;
+
+        CommitInlineText();
+        Rectangle selection = _selection;
+        var screenBounds = new Rectangle(
+            Location.X + selection.X,
+            Location.Y + selection.Y,
+            selection.Width,
+            selection.Height);
+        if (screenBounds.Width < 40 || screenBounds.Height < 40)
+        {
+            CaptureFailed?.Invoke("长截图选区太小，请重新选择页面或列表区域");
+            return;
+        }
+        int sessionVersion = ++_captureSessionVersion;
+        using Bitmap background = (Bitmap)_screen.Clone();
+        Hide();
+
+        try
+        {
+            await Task.Delay(100);
+            if (sessionVersion != _captureSessionVersion || IsDisposed) return;
+
+            using Bitmap initialFrame = CaptureService.CaptureScreen(screenBounds);
+            var mode = new ScrollCaptureForm(screenBounds, background, initialFrame)
+            {
+                Icon = Icon
+            };
+            _scrollCaptureForm = mode;
+            mode.Completed += (image, action) =>
+            {
+                if (!ReferenceEquals(_scrollCaptureForm, mode))
+                {
+                    image.Dispose();
+                    return;
+                }
+
+                _scrollCaptureForm = null;
+                ApplyScrollCaptureOverlays(image, selection, screenBounds);
+                Captured?.Invoke(image, screenBounds.Location, action);
+            };
+            mode.Cancelled += () =>
+            {
+                if (ReferenceEquals(_scrollCaptureForm, mode))
+                {
+                    _scrollCaptureForm = null;
+                }
+            };
+            mode.BeginMode();
+        }
+        catch (Exception ex)
+        {
+            if (sessionVersion != _captureSessionVersion || IsDisposed) return;
+            _scrollCaptureForm = null;
+            Show();
+            Activate();
+            Invalidate();
+            CaptureFailed?.Invoke("长截图失败：" + ex.Message);
+        }
+    }
+
+    private void ApplyScrollCaptureOverlays(
+        Bitmap image,
+        Rectangle selection,
+        Rectangle screenBounds)
+    {
+        using Graphics graphics = Graphics.FromImage(image);
+        graphics.SetClip(new Rectangle(0, 0, selection.Width, Math.Min(selection.Height, image.Height)));
+        if (_includeCursor && _capturedCursor is not null)
+        {
+            CaptureService.DrawCursor(graphics, _capturedCursor, screenBounds.Location);
+        }
+
+        GraphicsState annotationState = graphics.Save();
+        graphics.TranslateTransform(-selection.X, -selection.Y);
+        DrawAnnotations(graphics);
+        graphics.Restore(annotationState);
     }
 
     private void CancelCapture()
@@ -1020,6 +1111,9 @@ public class OverlayForm : Form
             case ToolbarAction.Cursor:
                 ToggleCursorCapture();
                 break;
+            case ToolbarAction.ScrollCapture:
+                StartScrollCapture();
+                break;
             case ToolbarAction.Ocr:
                 CompleteCapture(CaptureCompletionAction.Ocr);
                 break;
@@ -1238,6 +1332,12 @@ public class OverlayForm : Form
                         ToolbarAction.Cursor,
                         LucideIcon.MousePointer2,
                         _includeCursor ? "隐藏鼠标指针  (~)" : "显示鼠标指针  (~)");
+                    break;
+                case CaptureToolbarItem.ScrollCapture:
+                    Add(
+                        ToolbarAction.ScrollCapture,
+                        LucideIcon.GalleryVerticalEnd,
+                        "滚动并自动拼接长截图  (Esc 停止)");
                     break;
                 case CaptureToolbarItem.Ocr:
                     Add(ToolbarAction.Ocr, LucideIcon.FileText, "识别选区文字");
@@ -2764,6 +2864,7 @@ public class OverlayForm : Form
         Style,
         Undo,
         Cursor,
+        ScrollCapture,
         Ocr,
         Copy,
         Save,

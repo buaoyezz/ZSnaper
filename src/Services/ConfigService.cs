@@ -19,6 +19,13 @@ public class AppConfig
     public bool EnableBackgroundGlow { get => EnableGlowEffect; set => EnableGlowEffect = value; }
     public string AccentColorHex { get; set; } = "#10B981"; // 翡翠绿
     public bool AutoCopyClipboard { get; set; } = true;
+    public TrayIconStyle TrayIconStyle { get; set; } = TrayIconStyle.FollowTheme;
+    public string TrayIconSvgPath { get; set; } = string.Empty;
+    public string TrayIconLightColorHex { get; set; } = "#383C40";
+    public string TrayIconDarkColorHex { get; set; } = "#FFFFFF";
+    public int TrayIconScalePercent { get; set; } = 128;
+    public List<string> TrayIconCustomPalette { get; set; } =
+        ["#383C40", "#FFFFFF", "#10B981", "#0EA5E9", "#8B5CF6", "#F97316", "#EF4444", "#F59E0B"];
     public bool AutoSavePictures { get; set; } = true;
     public bool AutoCleanOcrParagraphs { get; set; } = true;
     public bool ShowNotification { get; set; } = true;
@@ -42,10 +49,19 @@ public class AppConfig
     public bool AutoStartOnBoot { get; set; } = false;
     public string CaptureHotkey { get; set; } = "Alt+Q";
     public string OcrHotkey { get; set; } = "Alt+X";
+    public bool CaptureHotkeyForceBinding { get; set; }
+    public bool OcrHotkeyForceBinding { get; set; }
+    public string UpdateChannel { get; set; } = "Alpha";
+    public bool AutoCheckUpdates { get; set; } = true;
+    public int UpdateCheckIntervalHours { get; set; } = 24;
+    public DateTimeOffset? LastUpdateCheckAt { get; set; }
 }
 
 public static class ConfigService
 {
+    private const string StartupRegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    private const string StartupValueName = "ZSnaper";
+    private const string StartupArgument = "--startup";
     private static readonly string ConfigPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "ZSnaper",
@@ -68,11 +84,91 @@ public static class ConfigService
             {
                 var json = File.ReadAllText(ConfigPath);
                 Current = JsonSerializer.Deserialize<AppConfig>(json) ?? new();
+                NormalizeCaptureToolbar();
+                NormalizeUpdateSettings();
+                NormalizeTrayIconSettings();
             }
         }
         catch
         {
             Current = new();
+        }
+
+        // 注册表是开机启动的真实来源，配置文件只负责保存 UI 状态。
+        Current.AutoStartOnBoot = IsAutoStartEnabled();
+    }
+
+    private static void NormalizeCaptureToolbar()
+    {
+        Current.CaptureToolbarItems ??= [];
+        Current.CaptureToolbarOrder ??= [];
+
+        if (Current.CaptureToolbarLayout != CaptureToolbarLayout.Custom)
+        {
+            Current.CaptureToolbarItems = CaptureToolbarDefaults.CreateLayout(Current.CaptureToolbarLayout);
+            Current.CaptureToolbarOrder = CaptureToolbarDefaults.CreateItems();
+            return;
+        }
+
+        if (!Current.CaptureToolbarOrder.Contains(CaptureToolbarItem.ScrollCapture))
+        {
+            int insertAt = Current.CaptureToolbarOrder.IndexOf(CaptureToolbarItem.Ocr);
+            if (insertAt < 0) insertAt = Current.CaptureToolbarOrder.Count;
+            Current.CaptureToolbarOrder.Insert(insertAt, CaptureToolbarItem.ScrollCapture);
+        }
+    }
+
+    private static void NormalizeUpdateSettings()
+    {
+        if (Current.UpdateCheckIntervalHours is not (6 or 12 or 24 or 168))
+        {
+            Current.UpdateCheckIntervalHours = 24;
+        }
+    }
+
+    private static void NormalizeTrayIconSettings()
+    {
+        if (!Enum.IsDefined(Current.TrayIconStyle))
+        {
+            Current.TrayIconStyle = TrayIconStyle.FollowTheme;
+        }
+
+        Current.TrayIconCustomPalette ??= [];
+        Current.TrayIconCustomPalette = Current.TrayIconCustomPalette
+            .Where(IsValidHexColor)
+            .Take(16)
+            .ToList();
+
+        if (Current.TrayIconCustomPalette.Count == 0)
+        {
+            Current.TrayIconCustomPalette = new AppConfig().TrayIconCustomPalette;
+        }
+
+        if (!IsValidHexColor(Current.TrayIconLightColorHex))
+        {
+            Current.TrayIconLightColorHex = "#383C40";
+        }
+
+        if (!IsValidHexColor(Current.TrayIconDarkColorHex))
+        {
+            Current.TrayIconDarkColorHex = "#FFFFFF";
+        }
+
+        Current.TrayIconScalePercent = Math.Clamp(Current.TrayIconScalePercent, 80, 160);
+    }
+
+    private static bool IsValidHexColor(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return false;
+
+        try
+        {
+            _ = ColorTranslator.FromHtml(value);
+            return true;
+        }
+        catch
+        {
+            return false;
         }
     }
 
@@ -106,8 +202,9 @@ public static class ConfigService
     {
         try
         {
-            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", false);
-            return key?.GetValue("ZSnaper") != null;
+            using var key = Registry.CurrentUser.OpenSubKey(StartupRegistryPath, false);
+            return key?.GetValue(StartupValueName) is string command &&
+                   !string.IsNullOrWhiteSpace(command);
         }
         catch
         {
@@ -115,29 +212,33 @@ public static class ConfigService
         }
     }
 
-    public static void SetAutoStart(bool enable)
+    public static bool SetAutoStart(bool enable)
     {
         try
         {
-            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true);
-            if (key != null)
+            using var key = Registry.CurrentUser.CreateSubKey(StartupRegistryPath, writable: true);
+            if (key is null)
             {
-                if (enable)
-                {
-                    var exePath = Environment.ProcessPath ?? Application.ExecutablePath;
-                    key.SetValue("ZSnaper", $"\"{exePath}\"");
-                }
-                else
-                {
-                    key.DeleteValue("ZSnaper", false);
-                }
+                return false;
             }
+
+            if (enable)
+            {
+                string exePath = Application.ExecutablePath;
+                key.SetValue(StartupValueName, $"\"{exePath}\" {StartupArgument}");
+            }
+            else
+            {
+                key.DeleteValue(StartupValueName, false);
+            }
+
             Current.AutoStartOnBoot = enable;
             Save();
+            return IsAutoStartEnabled() == enable;
         }
         catch
         {
-            // Ignore registry write error
+            return false;
         }
     }
 

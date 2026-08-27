@@ -42,6 +42,9 @@ public static class LucideRenderer
         [LucideIcon.Type] = "type.svg",
         [LucideIcon.Grid3X3] = "grid-3x3.svg",
         [LucideIcon.Undo2] = "undo-2.svg",
+        [LucideIcon.GalleryVerticalEnd] = "gallery-vertical-end.svg",
+        [LucideIcon.ChevronsDown] = "chevrons-down.svg",
+        [LucideIcon.Download] = "download.svg",
         [LucideIcon.Power] = "power.svg",
         [LucideIcon.X] = "x.svg"
     };
@@ -281,7 +284,7 @@ public static class LucideRenderer
         int PixelSize,
         int StrokeWidthKey);
 
-    private static class SvgPathParser
+    internal static class SvgPathParser
     {
         internal const string NumberPattern = @"[-+]?(?:\d*\.\d+|\d+\.?\d*)(?:[eE][-+]?\d+)?";
         private static readonly Regex TokenRegex = new($@"[A-Za-z]|{NumberPattern}", RegexOptions.Compiled);

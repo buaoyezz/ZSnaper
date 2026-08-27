@@ -24,6 +24,9 @@ public enum LucideIcon
     Type,
     Grid3X3,
     Undo2,
+    GalleryVerticalEnd,
+    ChevronsDown,
+    Download,
     Power,
     X
 }

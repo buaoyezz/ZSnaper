@@ -15,7 +15,7 @@ public readonly record struct HotkeyGesture(Keys KeyCode, Keys Modifiers)
     public bool IsValid =>
         KeyCode != Keys.None &&
         !IsModifierKey(KeyCode) &&
-        (Modifiers & SupportedModifiers) != Keys.None;
+        ((Modifiers & SupportedModifiers) != Keys.None || IsStandaloneKey(KeyCode));
 
     public string DisplayText => string.Join(" + ", GetParts());
 
@@ -72,6 +72,8 @@ public readonly record struct HotkeyGesture(Keys KeyCode, Keys Modifiers)
         Keys.ControlKey or Keys.LControlKey or Keys.RControlKey or
         Keys.ShiftKey or Keys.LShiftKey or Keys.RShiftKey or
         Keys.Menu or Keys.LMenu or Keys.RMenu;
+
+    private static bool IsStandaloneKey(Keys keyCode) => keyCode == Keys.PrintScreen;
 
     private IEnumerable<string> GetParts()
     {

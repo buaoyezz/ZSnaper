@@ -31,7 +31,7 @@
   <a href="https://github.com/buaoyezz/ZSnaper/releases"><img src="https://img.shields.io/github/v/release/buaoyezz/ZSnaper?include_prereleases&color=orange&label=Version" alt="Latest Release" /></a>
 </p>
 
-`ZSnaper` 是一款面向 Windows 的轻量截图工具并基于`Windows.Media.Ocr`提供本地离线的快速 OCR 能力,我们将智能选区、图像标注和文字识别放在了一个功能栏，
+`ZSnaper` 是一款面向 Windows 的轻量截图工具并基于`Windows.Media.Ocr`提供本地离线的快速 OCR 能力,我们将智能选区、滚动长截图、图像标注和文字识别放在了一个功能栏，
 > 本软件不上传截图，也不依赖在线识别服务(但后续`可能会支持`接入自己的OCR大模型)
 
 <p align="center">
@@ -78,6 +78,8 @@ explorer %APPDATA%\ZSnaper\
 快速打开此目录
 
 APP支持在应用内调整`主题`、`动画`、`强调色`、`快捷键`、`自动复制/保存`、`工具栏位置`、`标注样式`和 `OCR 段落清理`策略
+
+选定网页、文档或列表的可滚动区域后，点击工具栏中的`长截图`进入专用捕获模式；可以在透明选区内缓慢手动滚动，也可以点击`自动滚动`，确认内容后再保存或完成。捕获过程中按 `Esc` 可立即停止。
 
 ## 隐私相关
 

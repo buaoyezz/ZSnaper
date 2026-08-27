@@ -5,5 +5,6 @@ public enum CaptureCompletionAction
     Default,
     Copy,
     Save,
-    Ocr
+    Ocr,
+    ScrollCapture
 }

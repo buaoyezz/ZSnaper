@@ -39,6 +39,18 @@ public sealed class ModernScrollPanel : Panel
         }
     }
 
+    public void FitContentHeight(int bottomPadding = 0)
+    {
+        int contentBottom = 0;
+        foreach (Control control in _content.Controls)
+        {
+            if (!control.Visible) continue;
+            contentBottom = Math.Max(contentBottom, control.Bottom);
+        }
+
+        ContentHeight = contentBottom + Math.Max(0, bottomPadding);
+    }
+
     public ModernScrollPanel()
     {
         DoubleBuffered = true;

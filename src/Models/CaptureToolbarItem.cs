@@ -14,7 +14,8 @@ public enum CaptureToolbarItem
     Save,
     Reset,
     Cancel,
-    Confirm
+    Confirm,
+    ScrollCapture
 }
 
 public enum AnnotationToolBehavior
@@ -59,6 +60,7 @@ public static class CaptureToolbarDefaults
         CaptureToolbarItem.Style,
         CaptureToolbarItem.Undo,
         CaptureToolbarItem.Cursor,
+        CaptureToolbarItem.ScrollCapture,
         CaptureToolbarItem.Ocr,
         CaptureToolbarItem.Copy,
         CaptureToolbarItem.Save,
@@ -92,6 +94,7 @@ public static class CaptureToolbarDefaults
         CaptureToolbarLayout.Recognition =>
         [
             CaptureToolbarItem.Cursor,
+            CaptureToolbarItem.ScrollCapture,
             CaptureToolbarItem.Ocr,
             CaptureToolbarItem.Copy,
             CaptureToolbarItem.Save,
@@ -111,6 +114,7 @@ public static class CaptureToolbarDefaults
         CaptureToolbarItem.Style => "颜色与字体",
         CaptureToolbarItem.Undo => "撤销",
         CaptureToolbarItem.Cursor => "鼠标指针",
+        CaptureToolbarItem.ScrollCapture => "长截图",
         CaptureToolbarItem.Ocr => "OCR 识别",
         CaptureToolbarItem.Copy => "复制",
         CaptureToolbarItem.Save => "保存",

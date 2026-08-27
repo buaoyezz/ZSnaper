@@ -1,4 +1,5 @@
 using System.Drawing.Drawing2D;
+using System.Text.Json;
 using SkiaSharp;
 using ZSnaper.Controls;
 using ZSnaper.Helpers;
@@ -28,11 +29,28 @@ public class MainForm : Form
     private Label _homeOcrCountLabel = null!;
     private Label _homeLatestResultLabel = null!;
     private LinkLabel _homeOpenResultLink = null!;
+    private ModernButton _updateButton = null!;
+    private SettingItemRow _lastUpdateRow = null!;
     private string? _homeLatestFilePath;
+    private string? _latestUpdateUrl;
+    private Action<HotkeyCommand, HotkeyGesture>? _recordedHotkeyHandler;
+    private Action? _cancelRecordedHotkeyHandler;
+    private readonly CancellationTokenSource _welcomeQuoteCancellation = new();
+    private string _welcomeQuote = "保持好奇，保持创造。";
+    private string? _welcomeQuoteSource = "ZSnaper";
 
     // 事件
     public event Action<bool>? RequestCapture;
-    public event Func<HotkeyCommand, HotkeyGesture, HotkeyChangeResult>? RequestHotkeyChange;
+    public event Func<HotkeyCommand, HotkeyGesture, bool, HotkeyChangeResult>? RequestHotkeyChange;
+    public event Func<HotkeyCommand, bool, HotkeyChangeResult>? RequestHotkeyRecordingStart;
+    public event Func<HotkeyCommand, HotkeyChangeResult>? RequestHotkeyRecordingStop;
+    public event Action? RequestUpdateCheck;
+    public event Action<string>? RequestOpenUpdate;
+
+    public void ApplyRecordedHotkey(HotkeyCommand command, HotkeyGesture gesture) =>
+        _recordedHotkeyHandler?.Invoke(command, gesture);
+
+    public void CancelRecordedHotkey() => _cancelRecordedHotkeyHandler?.Invoke();
 
     public MainForm()
     {
@@ -122,11 +140,51 @@ public class MainForm : Form
         Disposed += (_, _) =>
         {
             ThemeManager.ThemeChanged -= OnThemeChanged;
+            _welcomeQuoteCancellation.Cancel();
+            _welcomeQuoteCancellation.Dispose();
             _mainSurface.Dispose();
         };
 
         // 加载时启用 Windows 11 原生圆角与 DWM 阴影
-        Load += (_, _) => UpdateDwmEffect();
+        Load += (_, _) =>
+        {
+            UpdateDwmEffect();
+            _ = LoadReleaseQuoteAsync();
+        };
+    }
+
+    private async Task LoadReleaseQuoteAsync()
+    {
+        if (!AppVersionInfo.IsReleaseBuild)
+        {
+            return;
+        }
+
+        try
+        {
+            HitokotoSentence? quote = await HitokotoService.FetchAsync(_welcomeQuoteCancellation.Token);
+            if (quote is null || IsDisposed || Disposing)
+            {
+                return;
+            }
+
+            _welcomeQuote = quote.Text;
+            _welcomeQuoteSource = quote.Source;
+            _mainSurfaceDirty = true;
+            Invalidate();
+        }
+        catch (OperationCanceledException)
+        {
+            // Closing the form cancels the optional network request.
+        }
+        catch (HttpRequestException)
+        {
+            // Keep the local sentence when the public service is unavailable.
+        }
+        catch (JsonException)
+        {
+            // Ignore malformed responses and keep the local sentence.
+        }
     }
 
     private void UpdateDwmEffect()
@@ -712,11 +770,13 @@ public class MainForm : Form
 
         var descriptionLabel = new Label
         {
-            Text = "点击快捷键框，然后按下新的组合键。修改后立即生效。",
+            Text = "普通绑定不会抢占其他软件快捷键；按键被占用时点击“强力绑定”。强力绑定会拦截该按键或组合键，需要权限时会弹出 UAC 请求。",
             Font = new Font("Microsoft YaHei UI", 8.5f),
-            AutoSize = true,
+            AutoSize = false,
+            AutoEllipsis = true,
             Location = new Point(1, 39)
         };
+        descriptionLabel.Size = new Size(contentWidth, 18);
 
         HotkeyGesture captureGesture = HotkeyGesture.TryParse(ConfigService.Current.CaptureHotkey, out HotkeyGesture parsedCapture)
             ? parsedCapture
@@ -724,28 +784,34 @@ public class MainForm : Form
         HotkeyGesture ocrGesture = HotkeyGesture.TryParse(ConfigService.Current.OcrHotkey, out HotkeyGesture parsedOcr)
             ? parsedOcr
             : new HotkeyGesture(Keys.X, Keys.Alt);
+        Label feedbackLabel = null!;
+        bool feedbackIsError = false;
 
         var captureCard = CreateHotkeyCard(
             "截图",
             "截取选区并按当前设置保存或复制",
             captureGesture,
             HotkeyCommand.Capture,
+            ConfigService.Current.CaptureHotkeyForceBinding,
             68,
             out HotkeyRecorder captureRecorder,
             out Label captureName,
-            out Label captureDescription);
+            out Label captureDescription,
+            out ModernButton captureForceButton);
 
         var ocrCard = CreateHotkeyCard(
             "读取文字",
             "截取选区并调用本地 OCR",
             ocrGesture,
             HotkeyCommand.Ocr,
+            ConfigService.Current.OcrHotkeyForceBinding,
             146,
             out HotkeyRecorder ocrRecorder,
             out Label ocrName,
-            out Label ocrDescription);
+            out Label ocrDescription,
+            out ModernButton ocrForceButton);
 
-        var feedbackLabel = new Label
+        feedbackLabel = new Label
         {
             Text = "点击右侧快捷键框开始修改",
             Font = new Font("Microsoft YaHei UI", 8.1f),
@@ -755,8 +821,6 @@ public class MainForm : Form
             Size = new Size(contentWidth, 20),
             Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
         };
-        bool feedbackIsError = false;
-
         void ShowFeedback(HotkeyChangeResult result)
         {
             feedbackLabel.Text = result.Message;
@@ -768,6 +832,23 @@ public class MainForm : Form
 
         captureRecorder.Feedback += ShowFeedback;
         ocrRecorder.Feedback += ShowFeedback;
+
+        _recordedHotkeyHandler = (command, gesture) =>
+        {
+            if (command == HotkeyCommand.Capture)
+            {
+                captureRecorder.CommitRecordedGesture(gesture);
+            }
+            else
+            {
+                ocrRecorder.CommitRecordedGesture(gesture);
+            }
+        };
+        _cancelRecordedHotkeyHandler = () =>
+        {
+            captureRecorder.CancelExternalRecording();
+            ocrRecorder.CancelExternalRecording();
+        };
 
         var fixedTitle = new Label
         {
@@ -842,6 +923,11 @@ public class MainForm : Form
         applyHotkeyTheme();
         ThemeManager.ThemeChanged += applyHotkeyTheme;
         panel.Disposed += (_, _) => ThemeManager.ThemeChanged -= applyHotkeyTheme;
+        panel.Disposed += (_, _) =>
+        {
+            _recordedHotkeyHandler = null;
+            _cancelRecordedHotkeyHandler = null;
+        };
 
         panel.Controls.Add(titleLabel);
         panel.Controls.Add(descriptionLabel);
@@ -857,10 +943,12 @@ public class MainForm : Form
             string description,
             HotkeyGesture gesture,
             HotkeyCommand command,
+            bool forceBinding,
             int top,
             out HotkeyRecorder recorder,
             out Label nameLabel,
-            out Label descLabel)
+            out Label descLabel,
+            out ModernButton forceButton)
         {
             var card = new ModernCard
             {
@@ -884,27 +972,83 @@ public class MainForm : Form
                 AutoSize = false,
                 AutoEllipsis = true,
                 Location = new Point(14, 38),
-                Size = new Size(Math.Max(1, contentWidth - 190), 19),
+                Size = new Size(Math.Max(1, contentWidth - 302), 19),
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
-            recorder = new HotkeyRecorder
+            HotkeyRecorder createdRecorder = new()
             {
                 Gesture = gesture,
                 Location = new Point(contentWidth - 156, 17),
                 Size = new Size(142, 34),
+                Anchor = AnchorStyles.Top | AnchorStyles.Right
+            };
+            recorder = createdRecorder;
+            createdRecorder.BeginRecordingRequest = useForceBinding => RequestHotkeyRecordingStart?.Invoke(command, useForceBinding)
+                ?? new HotkeyChangeResult(false, "快捷键服务尚未就绪");
+            createdRecorder.EndRecordingRequest = () => RequestHotkeyRecordingStop?.Invoke(command)
+                ?? new HotkeyChangeResult(true, string.Empty);
+
+            ModernButton createdForceButton = new()
+            {
+                Text = forceBinding ? "解除强力" : "强力绑定",
+                Icon = LucideIcon.ShieldCheck,
+                IsPrimary = false,
+                Font = new Font("Microsoft YaHei UI", 8.1f),
+                Size = new Size(118, 30),
+                Location = new Point(contentWidth - 282, 19),
                 Anchor = AnchorStyles.Top | AnchorStyles.Right,
-                TryCommit = proposed => RequestHotkeyChange?.Invoke(command, proposed)
-                    ?? new HotkeyChangeResult(false, "快捷键服务尚未就绪")
+                AccessibleRole = AccessibleRole.PushButton,
+                AccessibleName = forceBinding ? "解除强力绑定" : "强力绑定",
+                AccessibleDescription = "强力绑定会拦截已被其他程序占用的按键或组合键，需要权限时会弹出 UAC 请求"
+            };
+            forceButton = createdForceButton;
+            void RefreshForceButton()
+            {
+                createdForceButton.Text = forceBinding ? "解除强力" : "强力绑定";
+                createdForceButton.AccessibleName = forceBinding ? "解除强力绑定" : "强力绑定";
+                createdForceButton.Invalidate();
+            }
+
+            createdRecorder.TryCommit = (proposed, useForceBinding) =>
+            {
+                HotkeyChangeResult result = RequestHotkeyChange?.Invoke(command, proposed, useForceBinding)
+                    ?? new HotkeyChangeResult(false, "快捷键服务尚未就绪");
+                if (result.Success)
+                {
+                    forceBinding = useForceBinding;
+                    RefreshForceButton();
+                }
+
+                return result;
+            };
+            createdForceButton.Click += (_, _) =>
+            {
+                if (forceBinding)
+                {
+                    HotkeyChangeResult result = RequestHotkeyChange?.Invoke(command, createdRecorder.Gesture, false)
+                        ?? new HotkeyChangeResult(false, "快捷键服务尚未就绪");
+                    if (result.Success)
+                    {
+                        forceBinding = false;
+                        RefreshForceButton();
+                    }
+
+                    ShowFeedback(result);
+                    return;
+                }
+
+                createdRecorder.StartRecording(forceBinding: true);
             };
 
             card.Controls.Add(nameLabel);
             card.Controls.Add(descLabel);
+            card.Controls.Add(forceButton);
             card.Controls.Add(recorder);
             return card;
         }
     }
 
-    // 页面 4：偏好设置（固定标题 + 现代滚动内容区）
+    // 页面 4：偏好设置
     private Panel CreateSettingsPage()
     {
         var panel = CreateBasePage();
@@ -933,7 +1077,7 @@ public class MainForm : Form
 
         var subtitleLabel = new Label
         {
-            Text = "定制外观、截图工作流与系统行为",
+            Text = "按类别管理外观、截图、工具栏与更新",
             Font = new Font("Microsoft YaHei UI", 8.4f, FontStyle.Regular),
             ForeColor = ThemeManager.Palette.TextMuted,
             AutoSize = true,
@@ -941,38 +1085,46 @@ public class MainForm : Form
         };
         BindThemeColor(subtitleLabel, palette => palette.TextMuted);
 
+        var tabBar = new SettingsTabBar
+        {
+            Location = new Point(0, 52),
+            Size = new Size(panel.Width, 34),
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+        };
+
         var scrollPanel = new ModernScrollPanel
         {
-            Location = new Point(0, 54),
-            Size = new Size(panel.Width, panel.Height - 54),
-            Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
-            ContentHeight = 690
+            Location = new Point(0, 94),
+            Size = new Size(panel.Width, panel.Height - 94),
+            Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right
         };
         int contentWidth = Math.Max(320, scrollPanel.Content.ClientSize.Width - 4);
 
-        Label CreateSectionLabel(string text, int y)
+        Label CreateSectionLabel(string text)
         {
             var label = new Label
             {
                 Text = text,
                 Font = new Font("Microsoft YaHei UI", 8.4f, FontStyle.Bold),
                 ForeColor = ThemeManager.Palette.TextSecondary,
-                AutoSize = true,
-                Location = new Point(4, y)
+                AutoSize = false,
+                Size = new Size(contentWidth, 20),
+                TextAlign = ContentAlignment.MiddleLeft,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
             BindThemeColor(label, palette => palette.TextSecondary);
             return label;
         }
 
-        // 分组 1：外观与个性化 (Appearance & Customization - 4 项)
-        var group1 = new ModernCard
+        ModernCard CreateSettingsCard(int height) => new()
         {
             CornerRadius = 10,
-            Location = new Point(0, 28),
-            Size = new Size(contentWidth, 208),
+            Size = new Size(contentWidth, height),
             Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
         };
 
+        // 外观：只放影响窗口视觉的选项。
+        var appearanceCard = CreateSettingsCard(520);
         var rowAnim = new SettingItemRow
         {
             Title = "交互动效",
@@ -1007,27 +1159,232 @@ public class MainForm : Form
             ActionControl = new ThemeSegmentedControl()
         };
 
-        rowTheme.SetBounds(0, 0, group1.Width, 52);
-        rowAccent.SetBounds(0, 52, group1.Width, 52);
-        rowGlow.SetBounds(0, 104, group1.Width, 52);
-        rowAnim.SetBounds(0, 156, group1.Width, 52);
-        rowTheme.Anchor = rowAccent.Anchor = rowGlow.Anchor = rowAnim.Anchor =
-            AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-
-        group1.Controls.Add(rowTheme);
-        group1.Controls.Add(rowAccent);
-        group1.Controls.Add(rowGlow);
-        group1.Controls.Add(rowAnim);
-
-        // 分组 2：截图与工作流
-        var group2 = new ModernCard
+        var trayStyleOptions = new[]
         {
-            CornerRadius = 10,
-            Location = new Point(0, 278),
-            Size = new Size(contentWidth, 260),
-            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+            (Style: TrayIconStyle.FollowTheme, Label: "跟随主题"),
+            (Style: TrayIconStyle.Light, Label: "浅色图标"),
+            (Style: TrayIconStyle.Dark, Label: "深色图标"),
+            (Style: TrayIconStyle.CustomSvg, Label: "自定义 SVG"),
+            (Style: TrayIconStyle.LegacyBlack, Label: "黑底图标")
+        };
+        var trayStyleDropdown = new ModernDropdown
+        {
+            Font = new Font("Microsoft YaHei UI", 8f),
+            Size = new Size(150, 28),
+            AccessibleName = "托盘图标样式",
+            AccessibleDescription = "选择托盘图标的主题和 SVG 来源"
+        };
+        trayStyleDropdown.SetItems(trayStyleOptions.Select(option => option.Label));
+        int trayStyleIndex = 0;
+        for (int index = 0; index < trayStyleOptions.Length; index++)
+        {
+            if (trayStyleOptions[index].Style != ConfigService.Current.TrayIconStyle) continue;
+            trayStyleIndex = index;
+            break;
+        }
+        trayStyleDropdown.SelectedIndex = trayStyleIndex;
+
+        static Color ReadTrayIconColor(string value, Color fallback)
+        {
+            try
+            {
+                return Color.FromArgb(255, ColorTranslator.FromHtml(value));
+            }
+            catch
+            {
+                return fallback;
+            }
+        }
+
+        static string WriteTrayIconColor(Color color) =>
+            $"#{color.R:X2}{color.G:X2}{color.B:X2}";
+
+        Color[] configuredTrayIconColors = ConfigService.Current.TrayIconCustomPalette
+            .Select(value => ReadTrayIconColor(value, Color.White))
+            .ToArray();
+        var lightTrayIconColor = new TrayIconColorButton
+        {
+            Color = ReadTrayIconColor(ConfigService.Current.TrayIconLightColorHex, Color.FromArgb(56, 60, 64)),
+            CustomColors = configuredTrayIconColors
+        };
+        var darkTrayIconColor = new TrayIconColorButton
+        {
+            Color = ReadTrayIconColor(ConfigService.Current.TrayIconDarkColorHex, Color.White),
+            CustomColors = configuredTrayIconColors
+        };
+        bool paletteTargetsDark = false;
+        var trayIconPalette = new TrayIconPaletteControl();
+        trayIconPalette.SetColors(configuredTrayIconColors);
+        var trayIconScale = new TrayIconScaleControl
+        {
+            Value = ConfigService.Current.TrayIconScalePercent,
+            Enabled = ConfigService.Current.TrayIconStyle != TrayIconStyle.LegacyBlack
         };
 
+        void RefreshTrayIconCustomColors()
+        {
+            Color[] colors = trayIconPalette.Colors.ToArray();
+            lightTrayIconColor.CustomColors = colors;
+            darkTrayIconColor.CustomColors = colors;
+        }
+
+        void SaveTrayIconColor(bool dark, Color color)
+        {
+            if (dark)
+            {
+                ConfigService.Current.TrayIconDarkColorHex = WriteTrayIconColor(color);
+            }
+            else
+            {
+                ConfigService.Current.TrayIconLightColorHex = WriteTrayIconColor(color);
+            }
+            ConfigService.Save();
+        }
+
+        lightTrayIconColor.MouseDown += (_, _) => paletteTargetsDark = false;
+        darkTrayIconColor.MouseDown += (_, _) => paletteTargetsDark = true;
+        lightTrayIconColor.ColorChanged += (_, _) =>
+            SaveTrayIconColor(false, lightTrayIconColor.Color);
+        darkTrayIconColor.ColorChanged += (_, _) =>
+            SaveTrayIconColor(true, darkTrayIconColor.Color);
+        trayIconPalette.ColorSelected += color =>
+        {
+            if (paletteTargetsDark)
+            {
+                darkTrayIconColor.Color = color;
+                SaveTrayIconColor(true, color);
+            }
+            else
+            {
+                lightTrayIconColor.Color = color;
+                SaveTrayIconColor(false, color);
+            }
+        };
+        trayIconPalette.PaletteChanged += colors =>
+        {
+            ConfigService.Current.TrayIconCustomPalette = colors
+                .Select(WriteTrayIconColor)
+                .ToList();
+            RefreshTrayIconCustomColors();
+            ConfigService.Save();
+        };
+
+        trayIconScale.ValueCommitted += (_, _) =>
+        {
+            ConfigService.Current.TrayIconScalePercent = trayIconScale.Value;
+            ConfigService.Save();
+        };
+
+        trayStyleDropdown.SelectedIndexChanged += (_, _) =>
+        {
+            int selected = trayStyleDropdown.SelectedIndex;
+            if (selected < 0 || selected >= trayStyleOptions.Length) return;
+            ConfigService.Current.TrayIconStyle = trayStyleOptions[selected].Style;
+            trayIconScale.Enabled = ConfigService.Current.TrayIconStyle != TrayIconStyle.LegacyBlack;
+            ConfigService.Save();
+        };
+
+        var btnChooseTrayIconSvg = new ModernButton
+        {
+            Text = "选择 SVG",
+            IsPrimary = false,
+            CornerRadius = 6,
+            Icon = LucideIcon.Folder,
+            IconSize = 14,
+            IconGap = 5,
+            Size = new Size(104, 28)
+        };
+        var rowTrayIconSvg = new SettingItemRow
+        {
+            Title = "自定义 SVG 文件",
+            Description = string.IsNullOrWhiteSpace(ConfigService.Current.TrayIconSvgPath)
+                ? "未选择时使用内置 Logo SVG"
+                : Path.GetFileName(ConfigService.Current.TrayIconSvgPath),
+            ShowDivider = true,
+            ActionControl = btnChooseTrayIconSvg
+        };
+        btnChooseTrayIconSvg.Click += (_, _) =>
+        {
+            using var dialog = new OpenFileDialog
+            {
+                Title = "选择托盘图标 SVG",
+                Filter = "SVG 文件 (*.svg)|*.svg|所有文件 (*.*)|*.*",
+                CheckFileExists = true,
+                Multiselect = false
+            };
+            if (dialog.ShowDialog(panel.FindForm()) != DialogResult.OK) return;
+
+            ConfigService.Current.TrayIconSvgPath = dialog.FileName;
+            rowTrayIconSvg.Description = Path.GetFileName(dialog.FileName);
+            ConfigService.Current.TrayIconStyle = TrayIconStyle.CustomSvg;
+            trayStyleDropdown.SelectedIndex = 3;
+            ConfigService.Save();
+        };
+
+        var rowTrayIconStyle = new SettingItemRow
+        {
+            Title = "托盘图标样式",
+            Description = "自动切换 Light / Dark SVG，也可固定或使用自定义文件",
+            ShowDivider = true,
+            ActionControl = trayStyleDropdown
+        };
+        var rowTrayIconLightColor = new SettingItemRow
+        {
+            Title = "浅色模式图标颜色",
+            Description = "内置和自定义 SVG 的填充/描边颜色",
+            ShowDivider = true,
+            ActionControl = lightTrayIconColor
+        };
+        var rowTrayIconDarkColor = new SettingItemRow
+        {
+            Title = "深色模式图标颜色",
+            Description = "内置和自定义 SVG 的填充/描边颜色",
+            ShowDivider = true,
+            ActionControl = darkTrayIconColor
+        };
+        var rowTrayIconPalette = new SettingItemRow
+        {
+            Title = "SVG 调色板",
+            Description = "左键应用到最近选择的颜色，右键编辑色块",
+            ShowDivider = true,
+            ActionControl = trayIconPalette
+        };
+        var rowTrayIconScale = new SettingItemRow
+        {
+            Title = "SVG 托盘图标大小",
+            Description = "可调 80% - 160%；黑底图标不支持缩放",
+            ShowDivider = false,
+            ActionControl = trayIconScale
+        };
+
+        rowTheme.SetBounds(0, 0, appearanceCard.Width, 52);
+        rowAccent.SetBounds(0, 52, appearanceCard.Width, 52);
+        rowGlow.SetBounds(0, 104, appearanceCard.Width, 52);
+        rowAnim.SetBounds(0, 156, appearanceCard.Width, 52);
+        rowTrayIconStyle.SetBounds(0, 208, appearanceCard.Width, 52);
+        rowTrayIconSvg.SetBounds(0, 260, appearanceCard.Width, 52);
+        rowTrayIconLightColor.SetBounds(0, 312, appearanceCard.Width, 52);
+        rowTrayIconDarkColor.SetBounds(0, 364, appearanceCard.Width, 52);
+        rowTrayIconPalette.SetBounds(0, 416, appearanceCard.Width, 52);
+        rowTrayIconScale.SetBounds(0, 468, appearanceCard.Width, 52);
+        rowTheme.Anchor = rowAccent.Anchor = rowGlow.Anchor = rowAnim.Anchor =
+            rowTrayIconStyle.Anchor = rowTrayIconSvg.Anchor = rowTrayIconLightColor.Anchor =
+            rowTrayIconDarkColor.Anchor = rowTrayIconPalette.Anchor = rowTrayIconScale.Anchor =
+            AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+
+        appearanceCard.Controls.Add(rowTheme);
+        appearanceCard.Controls.Add(rowAccent);
+        appearanceCard.Controls.Add(rowGlow);
+        appearanceCard.Controls.Add(rowAnim);
+        appearanceCard.Controls.Add(rowTrayIconStyle);
+        appearanceCard.Controls.Add(rowTrayIconSvg);
+        appearanceCard.Controls.Add(rowTrayIconLightColor);
+        appearanceCard.Controls.Add(rowTrayIconDarkColor);
+        appearanceCard.Controls.Add(rowTrayIconPalette);
+        appearanceCard.Controls.Add(rowTrayIconScale);
+
+        // 工具栏与批注：编辑器单独成组，展开时不会把其他设置挤在同一张卡片里。
+        var toolbarCard = CreateSettingsCard(104);
         var rowToolbarPlacement = new SettingItemRow
         {
             Title = "截图工具栏位置",
@@ -1035,7 +1392,6 @@ public class MainForm : Form
             ShowDivider = true,
             ActionControl = new ToolbarPlacementSegmentedControl()
         };
-
         var btnCustomizeToolbar = new ModernButton
         {
             Text = "展开",
@@ -1049,8 +1405,8 @@ public class MainForm : Form
         var rowToolbarItems = new SettingItemRow
         {
             Title = "工具栏与批注样式",
-            Description = "工具顺序、图标行为、颜色、字体与笔刷",
-            ShowDivider = true,
+            Description = "工具顺序、完成行为、颜色、字体与笔刷",
+            ShowDivider = false,
             ActionControl = btnCustomizeToolbar
         };
 
@@ -1058,10 +1414,20 @@ public class MainForm : Form
         {
             Visible = false,
             Location = new Point(0, 104),
-            Size = new Size(group2.Width, 398),
+            Size = new Size(toolbarCard.Width, 398),
             Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
         };
 
+        rowToolbarPlacement.SetBounds(0, 0, toolbarCard.Width, 52);
+        rowToolbarItems.SetBounds(0, 52, toolbarCard.Width, 52);
+        rowToolbarPlacement.Anchor = rowToolbarItems.Anchor =
+            AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        toolbarCard.Controls.Add(rowToolbarPlacement);
+        toolbarCard.Controls.Add(rowToolbarItems);
+        toolbarCard.Controls.Add(toolbarEditor);
+
+        // 截图行为：完成后的默认去向和保存位置。
+        var workflowCard = CreateSettingsCard(156);
         var toggleCopy = new ModernToggleSwitch { Checked = ConfigService.Current.AutoCopyClipboard };
         toggleCopy.CheckedChanged += (_, _) => { ConfigService.Current.AutoCopyClipboard = toggleCopy.Checked; ConfigService.Save(); };
         var rowCopy = new SettingItemRow
@@ -1103,29 +1469,148 @@ public class MainForm : Form
             ActionControl = btnOpenDir
         };
 
-        rowToolbarPlacement.SetBounds(0, 0, group2.Width, 52);
-        rowToolbarItems.SetBounds(0, 52, group2.Width, 52);
-        rowCopy.SetBounds(0, 104, group2.Width, 52);
-        rowSave.SetBounds(0, 156, group2.Width, 52);
-        rowPath.SetBounds(0, 208, group2.Width, 52);
-        rowToolbarPlacement.Anchor = rowToolbarItems.Anchor = rowCopy.Anchor = rowSave.Anchor = rowPath.Anchor =
+        rowCopy.SetBounds(0, 0, workflowCard.Width, 52);
+        rowSave.SetBounds(0, 52, workflowCard.Width, 52);
+        rowPath.SetBounds(0, 104, workflowCard.Width, 52);
+        rowCopy.Anchor = rowSave.Anchor = rowPath.Anchor =
             AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        workflowCard.Controls.Add(rowCopy);
+        workflowCard.Controls.Add(rowSave);
+        workflowCard.Controls.Add(rowPath);
 
-        group2.Controls.Add(rowToolbarPlacement);
-        group2.Controls.Add(rowToolbarItems);
-        group2.Controls.Add(toolbarEditor);
-        group2.Controls.Add(rowCopy);
-        group2.Controls.Add(rowSave);
-        group2.Controls.Add(rowPath);
-
-        // 分组 3：系统提醒
-        var group3 = new ModernCard
+        // 更新与系统：与截图行为分开，避免设置页尾部出现过多不同类型的控件。
+        var systemCard = CreateSettingsCard(364);
+        var rowChannel = new SettingItemRow
         {
-            CornerRadius = 10,
-            Location = new Point(0, 580),
-            Size = new Size(contentWidth, 52),
-            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+            Title = "更新与发布通道",
+            Description = "正式版 (稳定) / 公测版 / 内测版",
+            ShowDivider = true,
+            ActionControl = new ChannelSegmentedControl()
         };
+        rowChannel.SetBounds(0, 0, systemCard.Width, 52);
+
+        _updateButton = new ModernButton
+        {
+            Text = "检查更新",
+            IsPrimary = false,
+            CornerRadius = 6,
+            Icon = LucideIcon.RotateCcw,
+            IconSize = 14,
+            IconGap = 5,
+            Size = new Size(102, 28)
+        };
+        _updateButton.Click += (_, _) =>
+        {
+            if (!string.IsNullOrWhiteSpace(_latestUpdateUrl))
+            {
+                RequestOpenUpdate?.Invoke(_latestUpdateUrl);
+            }
+            else
+            {
+                RequestUpdateCheck?.Invoke();
+            }
+        };
+
+        var rowUpdate = new SettingItemRow
+        {
+            Title = "检查应用更新",
+            Description = $"当前版本 {AppVersionInfo.DisplayVersion}",
+            ShowDivider = true,
+            ActionControl = _updateButton
+        };
+        rowUpdate.SetBounds(0, 52, systemCard.Width, 52);
+
+        _lastUpdateRow = new SettingItemRow
+        {
+            Title = "上次检查",
+            Description = FormatLastUpdateCheck(),
+            ShowDivider = true
+        };
+        _lastUpdateRow.SetBounds(0, 104, systemCard.Width, 52);
+
+        var toggleAutoUpdate = new ModernToggleSwitch
+        {
+            Checked = ConfigService.Current.AutoCheckUpdates
+        };
+        toggleAutoUpdate.CheckedChanged += (_, _) =>
+        {
+            ConfigService.Current.AutoCheckUpdates = toggleAutoUpdate.Checked;
+            ConfigService.Save();
+        };
+        var rowAutoUpdate = new SettingItemRow
+        {
+            Title = "自动检查更新",
+            Description = "应用启动后按设定频率自动检查",
+            ShowDivider = true,
+            ActionControl = toggleAutoUpdate
+        };
+        rowAutoUpdate.SetBounds(0, 156, systemCard.Width, 52);
+
+        var updateIntervalOptions = new[]
+        {
+            (Hours: 6, Label: "每 6 小时"),
+            (Hours: 12, Label: "每 12 小时"),
+            (Hours: 24, Label: "每天"),
+            (Hours: 168, Label: "每周")
+        };
+        var updateIntervalDropdown = new ModernDropdown
+        {
+            Font = new Font("Microsoft YaHei UI", 8f),
+            Size = new Size(112, 28),
+            AccessibleName = "自动检查更新间隔",
+            AccessibleDescription = "设置自动检查更新的时间间隔"
+        };
+        updateIntervalDropdown.SetItems(updateIntervalOptions.Select(option => option.Label));
+        int updateIntervalIndex = Array.FindIndex(
+            updateIntervalOptions,
+            option => option.Hours == ConfigService.Current.UpdateCheckIntervalHours);
+        updateIntervalDropdown.SelectedIndex = updateIntervalIndex >= 0 ? updateIntervalIndex : 2;
+        updateIntervalDropdown.SelectedIndexChanged += (_, _) =>
+        {
+            int selectedIndex = updateIntervalDropdown.SelectedIndex;
+            if (selectedIndex < 0) return;
+            ConfigService.Current.UpdateCheckIntervalHours = updateIntervalOptions[selectedIndex].Hours;
+            ConfigService.Save();
+        };
+
+        var rowUpdateInterval = new SettingItemRow
+        {
+            Title = "检查频率",
+            Description = "自动检查更新的时间间隔",
+            ShowDivider = true,
+            ActionControl = updateIntervalDropdown
+        };
+        rowUpdateInterval.SetBounds(0, 208, systemCard.Width, 52);
+
+        var toggleAutoStart = new ModernToggleSwitch
+        {
+            Checked = ConfigService.IsAutoStartEnabled()
+        };
+        bool restoringAutoStart = false;
+        toggleAutoStart.CheckedChanged += (_, _) =>
+        {
+            if (restoringAutoStart) return;
+
+            bool enabled = toggleAutoStart.Checked;
+            if (ConfigService.SetAutoStart(enabled)) return;
+
+            restoringAutoStart = true;
+            toggleAutoStart.Checked = ConfigService.IsAutoStartEnabled();
+            restoringAutoStart = false;
+            MessageBox.Show(
+                "无法更新开机自启动设置，请检查当前用户的注册表权限。",
+                "ZSnaper",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        };
+        var rowAutoStart = new SettingItemRow
+        {
+            Title = "开机自启动",
+            Description = "登录 Windows 后在后台启动并驻留托盘",
+            ShowDivider = true,
+            ActionControl = toggleAutoStart
+        };
+        rowAutoStart.SetBounds(0, 260, systemCard.Width, 52);
 
         var toggleNotify = new ModernToggleSwitch { Checked = ConfigService.Current.ShowNotification };
         toggleNotify.CheckedChanged += (_, _) => { ConfigService.Current.ShowNotification = toggleNotify.Checked; ConfigService.Save(); };
@@ -1136,9 +1621,19 @@ public class MainForm : Form
             ShowDivider = false,
             ActionControl = toggleNotify
         };
-        rowNotify.SetBounds(0, 0, group3.Width, 52);
-        rowNotify.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-        group3.Controls.Add(rowNotify);
+        rowNotify.SetBounds(0, 312, systemCard.Width, 52);
+
+        rowChannel.Anchor = rowUpdate.Anchor = _lastUpdateRow.Anchor = rowAutoUpdate.Anchor =
+            rowUpdateInterval.Anchor = rowNotify.Anchor =
+            AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        rowAutoStart.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        systemCard.Controls.Add(rowChannel);
+        systemCard.Controls.Add(rowUpdate);
+        systemCard.Controls.Add(_lastUpdateRow);
+        systemCard.Controls.Add(rowAutoUpdate);
+        systemCard.Controls.Add(rowUpdateInterval);
+        systemCard.Controls.Add(rowAutoStart);
+        systemCard.Controls.Add(rowNotify);
 
         var footerHint = new Label
         {
@@ -1146,48 +1641,121 @@ public class MainForm : Form
             Font = new Font("Microsoft YaHei UI", 8f, FontStyle.Regular),
             ForeColor = ThemeManager.Palette.TextMuted,
             AutoSize = true,
-            Location = new Point(4, 648)
+            Location = new Point(4, 0)
         };
         BindThemeColor(footerHint, palette => palette.TextMuted);
 
-        var systemSectionLabel = CreateSectionLabel("系统", 554);
+        var appearanceLabel = CreateSectionLabel("外观");
+        var toolbarLabel = CreateSectionLabel("工具栏与批注");
+        var workflowLabel = CreateSectionLabel("截图行为");
+        var systemLabel = CreateSectionLabel("更新与系统");
+
+        void LayoutSettings()
+        {
+            (Label Label, ModernCard Card)[] sections =
+            {
+                (appearanceLabel, appearanceCard),
+                (workflowLabel, workflowCard),
+                (toolbarLabel, toolbarCard),
+                (systemLabel, systemCard)
+            };
+
+            int selectedIndex = tabBar.SelectedIndex;
+            for (int index = 0; index < sections.Length; index++)
+            {
+                bool visible = index == selectedIndex;
+                sections[index].Label.Visible = visible;
+                sections[index].Card.Visible = visible;
+            }
+
+            (Label selectedLabel, ModernCard selectedCard) = sections[selectedIndex];
+            selectedLabel.Top = 4;
+            selectedCard.Top = selectedLabel.Bottom + 2;
+
+            footerHint.Visible = true;
+            footerHint.Top = selectedCard.Bottom + 16;
+            scrollPanel.FitContentHeight(bottomPadding: 18);
+        }
+
+        tabBar.SelectedIndexChanged += (_, _) =>
+        {
+            LayoutSettings();
+            scrollPanel.ScrollToTop();
+            scrollPanel.Content.Invalidate(true);
+        };
 
         btnCustomizeToolbar.Click += (_, _) =>
         {
             bool expanded = !toolbarEditor.Visible;
-            int editorHeight = expanded ? toolbarEditor.Height : 0;
 
             toolbarEditor.Visible = expanded;
             btnCustomizeToolbar.Text = expanded ? "收起" : "展开";
             btnCustomizeToolbar.Icon = expanded ? LucideIcon.Minus : LucideIcon.Sliders;
 
-            rowCopy.Top = 104 + editorHeight;
-            rowSave.Top = 156 + editorHeight;
-            rowPath.Top = 208 + editorHeight;
-            group2.Height = 260 + editorHeight;
-
-            systemSectionLabel.Top = 554 + editorHeight;
-            group3.Top = 580 + editorHeight;
-            footerHint.Top = 648 + editorHeight;
-            scrollPanel.ContentHeight = 690 + editorHeight;
-
-            group2.Invalidate(true);
+            toolbarCard.Height = 104 + (expanded ? toolbarEditor.Height : 0);
+            LayoutSettings();
+            toolbarCard.Invalidate(true);
             scrollPanel.Content.Invalidate(true);
         };
 
-        scrollPanel.Content.Controls.Add(CreateSectionLabel("外观与个性化", 2));
-        scrollPanel.Content.Controls.Add(group1);
-        scrollPanel.Content.Controls.Add(CreateSectionLabel("截图与工作流", 252));
-        scrollPanel.Content.Controls.Add(group2);
-        scrollPanel.Content.Controls.Add(systemSectionLabel);
-        scrollPanel.Content.Controls.Add(group3);
+        scrollPanel.Content.Controls.Add(appearanceLabel);
+        scrollPanel.Content.Controls.Add(appearanceCard);
+        scrollPanel.Content.Controls.Add(toolbarLabel);
+        scrollPanel.Content.Controls.Add(toolbarCard);
+        scrollPanel.Content.Controls.Add(workflowLabel);
+        scrollPanel.Content.Controls.Add(workflowCard);
+        scrollPanel.Content.Controls.Add(systemLabel);
+        scrollPanel.Content.Controls.Add(systemCard);
         scrollPanel.Content.Controls.Add(footerHint);
+        ConfigService.ConfigChanged += RefreshUpdateCheckInfo;
+        panel.Disposed += (_, _) => ConfigService.ConfigChanged -= RefreshUpdateCheckInfo;
+        LayoutSettings();
 
         panel.Controls.Add(titleLabel);
         panel.Controls.Add(subtitleLabel);
+        panel.Controls.Add(tabBar);
         panel.Controls.Add(scrollPanel);
 
         return panel;
+    }
+
+    public void SetUpdateStatus(string text, bool isBusy, string? releaseUrl = null)
+    {
+        if (IsDisposed || _updateButton is null) return;
+
+        if (InvokeRequired)
+        {
+            BeginInvoke(() => SetUpdateStatus(text, isBusy, releaseUrl));
+            return;
+        }
+
+        _latestUpdateUrl = releaseUrl;
+        _updateButton.Text = text;
+        _updateButton.Enabled = !isBusy;
+        _updateButton.Icon = !isBusy && !string.IsNullOrWhiteSpace(releaseUrl)
+            ? LucideIcon.ArrowUpRight
+            : LucideIcon.RotateCcw;
+        _updateButton.IsPrimary = !isBusy && !string.IsNullOrWhiteSpace(releaseUrl);
+    }
+
+    public void RefreshUpdateCheckInfo()
+    {
+        if (IsDisposed || _lastUpdateRow is null) return;
+
+        if (InvokeRequired)
+        {
+            BeginInvoke(RefreshUpdateCheckInfo);
+            return;
+        }
+
+        _lastUpdateRow.Description = FormatLastUpdateCheck();
+    }
+
+    private static string FormatLastUpdateCheck()
+    {
+        return ConfigService.Current.LastUpdateCheckAt is { } lastCheck
+            ? $"{lastCheck.LocalDateTime:yyyy-MM-dd HH:mm}"
+            : "尚未检查更新";
     }
 
     // 页面 5：关于
@@ -1245,53 +1813,72 @@ public class MainForm : Form
             e.Graphics.DrawLine(pen, 0, 0, separator.Width, 0);
         };
 
-        var infoItems = new List<(string Caption, string Value)>();
-        infoItems.Add(("VERSION", AppVersionInfo.DisplayVersion));
-        if (AppVersionInfo.ShowChannel)
+        var infoContainer = new Panel
         {
-            infoItems.Add(("CHANNEL", AppVersionInfo.Channel));
-        }
-        infoItems.Add(("BUILD NUMBER", AppVersionInfo.BuildNumber));
-        infoItems.Add(("BUILD DATE", AppVersionInfo.BuildDate));
-        infoItems.Add(("BUILD COUNT", $"#{AppVersionInfo.BuildCount}"));
-        infoItems.Add(("PLATFORM", "Windows"));
-        infoItems.Add(("RUNTIME", ".NET 8"));
+            BackColor = Color.Transparent,
+            Location = new Point(0, 146),
+            Size = new Size(contentWidth, 180),
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+        };
 
         var captionLabels = new List<Label>();
         var valueLabels = new List<Label>();
 
-        int startY = 146;
-        int rowStep = 25;
-
-        for (int i = 0; i < infoItems.Count; i++)
+        void RefreshInfoRows()
         {
-            int y = startY + i * rowStep;
-            var (caption, val) = infoItems[i];
+            infoContainer.Controls.Clear();
+            captionLabels.Clear();
+            valueLabels.Clear();
 
-            var capLabel = new Label
+            var infoItems = new List<(string Caption, string Value)>();
+            infoItems.Add(("VERSION", AppVersionInfo.DisplayVersion));
+            if (AppVersionInfo.ShowChannel)
             {
-                Text = caption,
-                Font = new Font("Microsoft YaHei UI", 8.2f, FontStyle.Regular),
-                Location = new Point(1, y),
-                Size = new Size(106, 20),
-                TextAlign = ContentAlignment.MiddleLeft
-            };
+                infoItems.Add(("CHANNEL", AppVersionInfo.BuildChannel));
+            }
+            infoItems.Add(("BUILD NUMBER", AppVersionInfo.BuildNumber));
+            infoItems.Add(("BUILD DATE", AppVersionInfo.BuildDate));
+            infoItems.Add(("BUILD COUNT", $"#{AppVersionInfo.BuildCount}"));
+            infoItems.Add(("PLATFORM", "Windows"));
+            infoItems.Add(("RUNTIME", ".NET 8"));
 
-            var valLabel = new Label
+            int rowStep = 25;
+            for (int i = 0; i < infoItems.Count; i++)
             {
-                Text = val,
-                Font = new Font("Segoe UI", 8.5f, FontStyle.Regular),
-                Location = new Point(112, y),
-                Size = new Size(contentWidth - 112, 20),
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
-                TextAlign = ContentAlignment.MiddleLeft
-            };
+                int y = i * rowStep;
+                var (caption, val) = infoItems[i];
 
-            captionLabels.Add(capLabel);
-            valueLabels.Add(valLabel);
-            panel.Controls.Add(capLabel);
-            panel.Controls.Add(valLabel);
+                var capLabel = new Label
+                {
+                    Text = caption,
+                    Font = new Font("Microsoft YaHei UI", 8.2f, FontStyle.Regular),
+                    ForeColor = ThemeManager.Palette.TextMuted,
+                    Location = new Point(1, y),
+                    Size = new Size(106, 20),
+                    TextAlign = ContentAlignment.MiddleLeft
+                };
+
+                var valLabel = new Label
+                {
+                    Text = val,
+                    Font = new Font("Segoe UI", 8.5f, FontStyle.Regular),
+                    ForeColor = ThemeManager.Palette.TextSecondary,
+                    Location = new Point(112, y),
+                    Size = new Size(contentWidth - 112, 20),
+                    Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                    TextAlign = ContentAlignment.MiddleLeft
+                };
+
+                captionLabels.Add(capLabel);
+                valueLabels.Add(valLabel);
+                infoContainer.Controls.Add(capLabel);
+                infoContainer.Controls.Add(valLabel);
+            }
         }
+
+        RefreshInfoRows();
+        ConfigService.ConfigChanged += RefreshInfoRows;
+        panel.Disposed += (_, _) => ConfigService.ConfigChanged -= RefreshInfoRows;
 
         Action applyAboutTheme = () =>
         {
@@ -1310,6 +1897,7 @@ public class MainForm : Form
         panel.Controls.Add(brandSurface);
         panel.Controls.Add(productLabel);
         panel.Controls.Add(separator);
+        panel.Controls.Add(infoContainer);
 
         return panel;
     }
@@ -1411,7 +1999,7 @@ public class MainForm : Form
         canvas.DrawCircle(centerX, centerY, Math.Max(1f, radius), paint);
     }
 
-    private static void DrawLogoArea(SKCanvas canvas, ThemePalette palette)
+    private void DrawLogoArea(SKCanvas canvas, ThemePalette palette)
     {
         Color logoColor = palette.Mode == ThemeMode.Light ? Color.FromArgb(24, 28, 38) : Color.FromArgb(250, 250, 255);
 
@@ -1425,14 +2013,51 @@ public class MainForm : Form
             50,
             22,
             SKFontStyleWeight.Bold);
-        SkiaDrawing.DrawText(
-            canvas,
-            "v0.1",
-            "Segoe UI",
-            10f,
-            palette.TextMuted,
-            52,
-            36.5f,
-            SKFontStyleWeight.Bold);
+        string? channelLabel = AppVersionInfo.WelcomeChannelLabel;
+        if (!string.IsNullOrEmpty(channelLabel))
+        {
+            SkiaDrawing.DrawText(
+                canvas,
+                channelLabel,
+                "Segoe UI",
+                10f,
+                palette.TextMuted,
+                52,
+                36.5f,
+                SKFontStyleWeight.Bold);
+        }
+        else if (AppVersionInfo.IsReleaseBuild)
+        {
+            SkiaDrawing.DrawText(
+                canvas,
+                LimitHeaderText($"“{_welcomeQuote}”", 42),
+                "Microsoft YaHei UI",
+                9.2f,
+                palette.TextMuted,
+                52,
+                37.5f);
+
+            if (!string.IsNullOrWhiteSpace(_welcomeQuoteSource))
+            {
+                SkiaDrawing.DrawText(
+                    canvas,
+                    LimitHeaderText($"— {_welcomeQuoteSource}", 28),
+                    "Microsoft YaHei UI",
+                    8.2f,
+                    palette.TextMuted,
+                    52,
+                    50.5f);
+            }
+        }
+    }
+
+    private static string LimitHeaderText(string text, int maxLength)
+    {
+        if (text.Length <= maxLength)
+        {
+            return text;
+        }
+
+        return string.Concat(text.AsSpan(0, Math.Max(1, maxLength - 1)), "…");
     }
 }

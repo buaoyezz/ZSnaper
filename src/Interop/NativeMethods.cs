@@ -12,6 +12,8 @@ internal static partial class NativeMethods
     public const uint MOD_SHIFT = 0x0004;
     public const uint MOD_WIN = 0x0008;
     public const uint MOD_NOREPEAT = 0x4000;
+    public const int ERROR_ACCESS_DENIED = 5;
+    public const int ERROR_HOTKEY_ALREADY_REGISTERED = 1409;
 
     public const uint VK_Q = 0x51;
     public const uint VK_X = 0x58;
@@ -27,6 +29,9 @@ internal static partial class NativeMethods
     public const int CURSOR_SHOWING = 0x00000001;
     public const uint DI_NORMAL = 0x0003;
     public const uint DI_DEFAULTSIZE = 0x0008;
+    public const uint MOUSEEVENTF_WHEEL = 0x0800;
+    public const int VK_ESCAPE = 0x1B;
+    public const uint GA_ROOT = 2;
     public const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
 
     // DWM
@@ -44,6 +49,10 @@ internal static partial class NativeMethods
     [LibraryImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool UnregisterHotKey(nint hWnd, int id);
+
+    [LibraryImport("user32.dll", EntryPoint = "PostMessageW", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool PostMessage(nint hWnd, uint msg, nint wParam, nint lParam);
 
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -74,6 +83,35 @@ internal static partial class NativeMethods
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool IsIconic(nint hWnd);
+
+    [LibraryImport("user32.dll")]
+    public static partial nint WindowFromPoint(POINT point);
+
+    [LibraryImport("user32.dll")]
+    public static partial nint GetAncestor(nint hWnd, uint flags);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool SetForegroundWindow(nint hWnd);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool GetCursorPos(out POINT point);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool SetCursorPos(int x, int y);
+
+    [LibraryImport("user32.dll")]
+    public static partial short GetAsyncKeyState(int virtualKey);
+
+    [LibraryImport("user32.dll", EntryPoint = "mouse_event")]
+    public static partial void MouseEvent(
+        uint flags,
+        uint dx,
+        uint dy,
+        int data,
+        nuint extraInfo);
 
     [LibraryImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
