@@ -23,8 +23,8 @@ public static class AppVersionInfo
         _ => null
     };
 
-    public const string BuildNumber = "20260827.1";
-    public const string BuildDate = "2026-08-27";
+    public const string BuildNumber = "20260828.1";
+    public const string BuildDate = "2026-08-28";
     public const int BuildCount = 1;
 
     public static bool ShowChannel => !IsReleaseBuild;
