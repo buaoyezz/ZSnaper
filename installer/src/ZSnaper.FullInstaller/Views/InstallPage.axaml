@@ -1,0 +1,76 @@
+﻿<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="ZSnaper.FullInstaller.Views.InstallPage">
+  <Grid Margin="56,22,56,24" RowDefinitions="Auto,*,Auto">
+    <!-- 顶部步骤指示与标题 -->
+    <Grid Classes="reveal" ColumnDefinitions="*,Auto">
+      <StackPanel Spacing="4">
+        <TextBlock Text="STEP 02 / 03" Foreground="#34D399" FontSize="11" FontWeight="Bold" />
+        <TextBlock Text="选择安装目录" Classes="h1" />
+        <TextBlock Text="选择程序安装路径。默认安装至当前用户应用目录，免管理员权限。" Classes="muted" />
+      </StackPanel>
+
+      <!-- 步骤指示胶囊 -->
+      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Top" Margin="0,4,0,0">
+        <Border Width="28" Height="4" CornerRadius="2" Background="{StaticResource AccentBrush}" />
+        <Border Width="28" Height="4" CornerRadius="2" Background="{StaticResource AccentBrush}" />
+        <Border Width="28" Height="4" CornerRadius="2" Background="#2A3547" />
+      </StackPanel>
+    </Grid>
+
+    <!-- 中间安装设置区域 -->
+    <StackPanel Grid.Row="1" Classes="reveal-late" Margin="0,24,0,16" Spacing="14">
+      <TextBlock Text="目标安装路径" Classes="body" FontWeight="SemiBold" />
+      <Grid ColumnDefinitions="*,10,96">
+        <TextBox x:Name="InstallPathBox" VerticalContentAlignment="Center" />
+        <Button x:Name="BrowseButton" Grid.Column="2" Classes="secondary" Content="浏览…" Height="42" />
+      </Grid>
+
+      <!-- 提示卡片 -->
+      <Border Classes="hover-card" Background="#70121A26" BorderBrush="#2E3B4E" BorderThickness="1" CornerRadius="12" Padding="14,12">
+        <Grid ColumnDefinitions="26,*">
+          <Border Width="20" Height="20" CornerRadius="10" Background="#10B981" VerticalAlignment="Top">
+            <TextBlock Text="✓" Foreground="#06281E" FontSize="11" HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="Bold" />
+          </Border>
+          <StackPanel Grid.Column="1" Spacing="2">
+            <TextBlock Text="绿色纯净 · 便携独立" Classes="body" FontSize="12.5" FontWeight="SemiBold" Foreground="White" />
+            <TextBlock Text="安装后可自由移动目录，不写入多余垃圾注册表项。"
+                       Classes="muted" FontSize="11.5" TextWrapping="Wrap" />
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <!-- 安装进度条展示区 -->
+      <StackPanel x:Name="ProgressArea" IsVisible="False" Spacing="8" Margin="0,4,0,0">
+        <Grid ColumnDefinitions="*,Auto">
+          <TextBlock x:Name="ProgressStatus" Text="正在准备写入文件…" Classes="muted" FontSize="12" />
+          <TextBlock x:Name="ProgressPercent" Grid.Column="1" Text="0%" Foreground="#34D399" FontSize="12" FontWeight="Bold" />
+        </Grid>
+        <ProgressBar x:Name="InstallProgress" Classes="install-progress" Minimum="0" Maximum="100" Height="6" CornerRadius="3"
+                     Foreground="{StaticResource AccentBrush}" Background="#1E2738" />
+      </StackPanel>
+
+      <!-- 错误提示框 -->
+      <Border x:Name="ErrorBanner" IsVisible="False" Background="#50EF4444" BorderBrush="#EF4444"
+              BorderThickness="1" CornerRadius="10" Padding="12,9">
+        <TextBlock x:Name="ErrorText" Foreground="#FEE2E2" FontSize="12" TextWrapping="Wrap" />
+      </Border>
+    </StackPanel>
+
+    <!-- 底部操作导航栏 -->
+    <Grid Grid.Row="2" ColumnDefinitions="Auto,*,Auto">
+      <Button x:Name="BackButton" Classes="secondary" Content="返回" Width="96" />
+      <TextBlock Grid.Column="1" Text="仅当前用户 · 安全免提权" Classes="muted" FontSize="11.5"
+                 HorizontalAlignment="Center" VerticalAlignment="Center" />
+      <Button x:Name="InstallButton" Grid.Column="2" Classes="primary" Width="136">
+        <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+          <TextBlock Text="立即安装" />
+          <Path Classes="arrow" Width="14" Height="14" Stretch="Uniform"
+                Stroke="#06281E" StrokeThickness="2"
+                StrokeLineCap="Round" StrokeJoin="Round"
+                Data="M2 8 L14 8 M9 3 L14 8 L9 13" />
+        </StackPanel>
+      </Button>
+    </Grid>
+  </Grid>
+</UserControl>

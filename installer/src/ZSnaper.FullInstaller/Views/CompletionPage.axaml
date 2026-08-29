@@ -1,0 +1,69 @@
+﻿<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="ZSnaper.FullInstaller.Views.CompletionPage">
+  <Grid Margin="56,22,56,24" RowDefinitions="Auto,*,Auto">
+    <!-- 顶部步骤指示与标题 -->
+    <Grid Classes="reveal" ColumnDefinitions="*,Auto">
+      <StackPanel Spacing="4">
+        <TextBlock Text="STEP 03 / 03" Foreground="#34D399" FontSize="11" FontWeight="Bold" />
+        <TextBlock Text="部署完成，一切就绪" Classes="h1" />
+        <TextBlock Text="ZSnaper 已经安装成功，选择你习惯的启动入口与开机偏好。" Classes="muted" />
+      </StackPanel>
+
+      <!-- 步骤指示胶囊 (全部完成) -->
+      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Top" Margin="0,4,0,0">
+        <Border Width="28" Height="4" CornerRadius="2" Background="{StaticResource AccentBrush}" />
+        <Border Width="28" Height="4" CornerRadius="2" Background="{StaticResource AccentBrush}" />
+        <Border Width="28" Height="4" CornerRadius="2" Background="{StaticResource AccentBrush}" />
+      </StackPanel>
+    </Grid>
+
+    <!-- 中间内容区域 -->
+    <Grid Grid.Row="1" Classes="reveal-late" Margin="0,20,0,16" ColumnDefinitions="140,*">
+      <!-- 带有脉冲绿光的庆祝打勾徽章 -->
+      <Grid Width="112" Height="112" HorizontalAlignment="Left" VerticalAlignment="Center">
+        <Ellipse Classes="success-pulse" Fill="#10B981" Opacity="0.2" />
+        <Ellipse Width="76" Height="76" Fill="#10B981" HorizontalAlignment="Center" VerticalAlignment="Center" />
+        <Path Width="34" Height="34" Stretch="Uniform" Stroke="#06281E" StrokeThickness="3.6"
+              StrokeLineCap="Round" StrokeJoin="Round"
+              Data="M3 25 L16 38 L42 8" HorizontalAlignment="Center" VerticalAlignment="Center" />
+      </Grid>
+
+      <!-- 入口选项列表 -->
+      <StackPanel Grid.Column="1" Spacing="10" VerticalAlignment="Center" Margin="10,0,0,0">
+        <TextBlock Text="快捷启动偏好" Classes="h2" />
+
+        <Border Classes="hover-card" Background="#70121A26" BorderBrush="#2E3B4E" BorderThickness="1" CornerRadius="10" Padding="12,9">
+          <CheckBox x:Name="DesktopShortcutCheck" Content="创建桌面快捷方式" IsChecked="True" />
+        </Border>
+
+        <Border Classes="hover-card" Background="#70121A26" BorderBrush="#2E3B4E" BorderThickness="1" CornerRadius="10" Padding="12,9">
+          <CheckBox x:Name="StartMenuShortcutCheck" Content="添加到系统开始菜单" IsChecked="True" />
+        </Border>
+
+        <Border Classes="hover-card" Background="#70121A26" BorderBrush="#2E3B4E" BorderThickness="1" CornerRadius="10" Padding="12,9">
+          <StackPanel Spacing="2">
+            <CheckBox x:Name="AutoStartCheck" Content="开机时自动静默启动（常驻托盘）" />
+          </StackPanel>
+        </Border>
+      </StackPanel>
+    </Grid>
+
+    <!-- 底部操作导航栏 -->
+    <Grid Grid.Row="2" ColumnDefinitions="*,Auto">
+      <StackPanel Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
+        <Ellipse Width="6" Height="6" Fill="#10B981" />
+        <TextBlock Text="准备完成 · 随时体验极速截图" Classes="muted" FontSize="11.5" />
+      </StackPanel>
+      <Button x:Name="FinishButton" Grid.Column="1" Classes="primary" Width="156">
+        <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+          <TextBlock Text="完成并启动" />
+          <Path Classes="arrow" Width="14" Height="14" Stretch="Uniform"
+                Stroke="#06281E" StrokeThickness="2"
+                StrokeLineCap="Round" StrokeJoin="Round"
+                Data="M2 8 L14 8 M9 3 L14 8 L9 13" />
+        </StackPanel>
+      </Button>
+    </Grid>
+  </Grid>
+</UserControl>

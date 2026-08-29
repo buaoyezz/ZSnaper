@@ -1,0 +1,54 @@
+﻿<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="ZSnaper.FullInstaller.Views.AgreementPage">
+  <Grid Margin="56,22,56,24" RowDefinitions="Auto,*,Auto">
+    <!-- 顶部步骤指示与标题 -->
+    <Grid Classes="reveal" ColumnDefinitions="*,Auto">
+      <StackPanel Spacing="4">
+        <TextBlock Text="STEP 01 / 03" Foreground="#34D399" FontSize="11" FontWeight="Bold" />
+        <TextBlock Text="使用协议与说明" Classes="h1" />
+        <TextBlock Text="请阅读使用说明，然后勾选同意以继续配置安装。" Classes="muted" />
+      </StackPanel>
+
+      <!-- 步骤指示胶囊 -->
+      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Top" Margin="0,4,0,0">
+        <Border Width="28" Height="4" CornerRadius="2" Background="{StaticResource AccentBrush}" />
+        <Border Width="28" Height="4" CornerRadius="2" Background="#2A3547" />
+        <Border Width="28" Height="4" CornerRadius="2" Background="#2A3547" />
+      </StackPanel>
+    </Grid>
+
+    <!-- 中间协议内容区域 -->
+    <Grid Grid.Row="1" Classes="reveal-late" Margin="0,18,0,16" RowDefinitions="*,Auto">
+      <Border Background="#99141A24" BorderBrush="#334155" BorderThickness="1" CornerRadius="12" Padding="18,14">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+          <StackPanel Spacing="10">
+            <TextBlock Text="ZSnaper 开源协议与使用规范" FontWeight="Bold" Foreground="White" FontSize="13" />
+            <TextBlock Classes="body" TextWrapping="Wrap" LineHeight="22" FontSize="12.5" Foreground="#CBD5E1"
+                       Text="1. ZSnaper 是一款专为 Windows 设计的高性能截图、本地离线 OCR 与画板标注效率工具。&#x0a;&#x0a;2. 【纯净独立】安装向导只会将程序文件写入你指定的安装目录，绝不夹带任何第三方推广或静默组件。&#x0a;&#x0a;3. 【用户数据安全】所有偏好设置与历史记录独立存放于 %APPDATA%\ZSnaper，卸载程序默认保留这些配置，方便未来平滑升级与重装。&#x0a;&#x0a;4. 【开源与许可】本项目基于 GPL-3.0 协议开源，请在遵守当地法律法规的前提下使用。" />
+          </StackPanel>
+        </ScrollViewer>
+      </Border>
+
+      <!-- 勾选框 -->
+      <CheckBox x:Name="AgreementCheck" Grid.Row="1" Margin="2,12,0,0"
+                Content="我已阅读并同意 ZSnaper 使用协议" />
+    </Grid>
+
+    <!-- 底部操作导航栏 -->
+    <Grid Grid.Row="2" ColumnDefinitions="Auto,*,Auto">
+      <Button x:Name="BackButton" Classes="secondary" Content="返回" Width="96" />
+      <TextBlock Grid.Column="1" Text="现有配置与历史记录不会被覆盖" Classes="muted" FontSize="11.5"
+                 HorizontalAlignment="Center" VerticalAlignment="Center" />
+      <Button x:Name="NextButton" Grid.Column="2" Classes="primary" Width="120" IsEnabled="False">
+        <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+          <TextBlock Text="下一步" />
+          <Path Classes="arrow" Width="14" Height="14" Stretch="Uniform"
+                Stroke="#06281E" StrokeThickness="2"
+                StrokeLineCap="Round" StrokeJoin="Round"
+                Data="M2 8 L14 8 M9 3 L14 8 L9 13" />
+        </StackPanel>
+      </Button>
+    </Grid>
+  </Grid>
+</UserControl>

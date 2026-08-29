@@ -1,0 +1,119 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:ZSnaper.FullInstaller.Controls"
+        x:Class="ZSnaper.FullInstaller.InstallerWindow"
+        Title="ZSnaper Setup"
+        Width="520" Height="360"
+        CanResize="False"
+        WindowStartupLocation="CenterScreen"
+        WindowDecorations="None"
+        TransparencyLevelHint="Mica, AcrylicBlur, Transparent"
+        TransparencyBackgroundFallback="Transparent"
+        Background="Transparent">
+
+  <Border Background="#90121215"
+          BorderBrush="#25FFFFFF"
+          BorderThickness="1"
+          CornerRadius="10"
+          ClipToBounds="True">
+    <Grid RowDefinitions="36,*">
+      <!-- Title Bar (Draggable) -->
+      <Grid Background="Transparent" PointerPressed="OnTitlePointerPressed">
+        <StackPanel Orientation="Horizontal" Margin="16,0,0,0" Spacing="8" VerticalAlignment="Center" IsHitTestVisible="False">
+          <controls:BrandMark Width="13" Height="13" />
+          <TextBlock Text="ZSnaper Setup" FontSize="12" Foreground="#88FFFFFF" VerticalAlignment="Center" />
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,4,0">
+          <Button x:Name="MinimizeButton" Classes="titlebar-btn">
+            <Path Width="10" Height="10" Stretch="Uniform" Stroke="#88FFFFFF" StrokeThickness="1.2" Data="M0,5 L10,5" />
+          </Button>
+          <Button x:Name="CloseButton" Classes="titlebar-btn close">
+            <Path Width="10" Height="10" Stretch="Uniform" Stroke="#88FFFFFF" StrokeThickness="1.2" Data="M1,1 L9,9 M1,9 L9,1" />
+          </Button>
+        </StackPanel>
+      </Grid>
+
+      <!-- Content Area -->
+      <Grid Grid.Row="1" Margin="36,12,36,28">
+
+        <!-- 1. Page 1: Welcome Panel -->
+        <Grid x:Name="ReadyPanel" RowDefinitions="*,Auto">
+          <!-- Center Logo (Crisp Vector) + Wordmark -->
+          <StackPanel Grid.Row="0" Spacing="20" HorizontalAlignment="Center" VerticalAlignment="Center">
+            <controls:BrandMark Width="68" Height="82" HorizontalAlignment="Center" />
+            <controls:BrandWordmark HorizontalAlignment="Center" />
+          </StackPanel>
+
+          <!-- Next Button (Comfortable width) -->
+          <Button x:Name="NextButton" Grid.Row="1" Content="下一步" Classes="primary" Width="180" Height="36" HorizontalAlignment="Center" HorizontalContentAlignment="Center" />
+        </Grid>
+
+        <!-- 2. Page 2: Custom Options / Setup Panel -->
+        <Grid x:Name="CustomizePanel" RowDefinitions="Auto,*,Auto" IsVisible="False">
+          <!-- Section Title -->
+          <TextBlock Grid.Row="0" Text="自定义安装" FontSize="15" FontWeight="SemiBold" Foreground="#FAFAFA" />
+
+          <!-- Settings Fields -->
+          <StackPanel Grid.Row="1" VerticalAlignment="Center" Spacing="16">
+            <StackPanel Spacing="6">
+              <TextBlock Text="安装路径" FontSize="12" Foreground="#A1A1AA" />
+              <Grid ColumnDefinitions="*,8,Auto">
+                <TextBox x:Name="InstallPathBox" PlaceholderText="选择或输入安装路径" />
+                <Button x:Name="BrowseButton" Grid.Column="2" Content="浏览..." Classes="secondary" />
+              </Grid>
+            </StackPanel>
+
+            <StackPanel Spacing="6">
+              <TextBlock Text="快捷方式" FontSize="12" Foreground="#A1A1AA" />
+              <StackPanel Orientation="Horizontal" Spacing="24">
+                <CheckBox x:Name="DesktopShortcutCheck" Content="桌面快捷方式" IsChecked="True" />
+                <CheckBox x:Name="StartMenuShortcutCheck" Content="开始菜单" IsChecked="True" />
+                <CheckBox x:Name="AutoStartCheck" Content="开机自启" />
+              </StackPanel>
+            </StackPanel>
+
+            <TextBlock x:Name="ErrorText" Foreground="#F87171" FontSize="12" HorizontalAlignment="Center" IsVisible="False" />
+          </StackPanel>
+
+          <!-- Back and Start Install Buttons -->
+          <Grid Grid.Row="2" ColumnDefinitions="*,12,*">
+            <Button x:Name="BackFromCustomizeButton" Grid.Column="0" Content="上一步" Classes="secondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
+            <Button x:Name="StartCustomizeInstallButton" Grid.Column="2" Content="立即安装" Classes="primary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
+          </Grid>
+        </Grid>
+
+        <!-- 3. Page 3: Progress Panel -->
+        <Grid x:Name="ProgressPanel" RowDefinitions="*,Auto" IsVisible="False">
+          <StackPanel Grid.Row="0" VerticalAlignment="Center" Spacing="20" HorizontalAlignment="Center">
+            <controls:BrandMark Width="52" Height="64" HorizontalAlignment="Center" />
+            <TextBlock x:Name="ProgressStatus" Text="正在安装 ZSnaper..." FontSize="14" FontWeight="Medium" Foreground="#FAFAFA" HorizontalAlignment="Center" />
+          </StackPanel>
+
+          <StackPanel Grid.Row="1" Spacing="6" Margin="0,0,0,4">
+            <ProgressBar x:Name="InstallProgress" Minimum="0" Maximum="100" Height="4" CornerRadius="2" />
+            <TextBlock x:Name="ProgressPercent" Text="0%" FontSize="12" FontWeight="SemiBold" Foreground="#A1A1AA" HorizontalAlignment="Right" />
+          </StackPanel>
+        </Grid>
+
+        <!-- 4. Page 4: Success Panel -->
+        <Grid x:Name="SuccessPanel" RowDefinitions="*,Auto" IsVisible="False">
+          <StackPanel Grid.Row="0" VerticalAlignment="Center" Spacing="16" HorizontalAlignment="Center">
+            <!-- Crisp Monochrome Success Circle -->
+            <Border Width="56" Height="56" CornerRadius="28" BorderBrush="#FFFFFF" BorderThickness="1.5" Background="#18FFFFFF" HorizontalAlignment="Center">
+              <Path Width="20" Height="20" Stretch="Uniform" Stroke="#FFFFFF" StrokeThickness="2.5" StrokeLineCap="Round" StrokeJoin="Round" Data="M4 12 L10 18 L20 6" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+
+            <TextBlock Text="安装完成" FontSize="18" FontWeight="SemiBold" Foreground="#FAFAFA" HorizontalAlignment="Center" />
+            <TextBlock Text="ZSnaper 已成功安装到您的电脑。" FontSize="13" Foreground="#A1A1AA" HorizontalAlignment="Center" />
+          </StackPanel>
+
+          <Grid Grid.Row="1" ColumnDefinitions="*,12,*">
+            <Button x:Name="ExitButton" Grid.Column="0" Content="关闭" Classes="secondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
+            <Button x:Name="FinishButton" Grid.Column="2" Content="运行 ZSnaper" Classes="primary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
+          </Grid>
+        </Grid>
+
+      </Grid>
+    </Grid>
+  </Border>
+</Window>

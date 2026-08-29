@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Version>0.0.3</Version>
+    <InformationalVersion>0.0.3-alpha</InformationalVersion>
+    <AssemblyName>ZSnaper.UpdateInstaller</AssemblyName>
+    <RootNamespace>ZSnaper.UpdateInstaller</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ZSnaper.Installer.Core\ZSnaper.Installer.Core.csproj" />
+  </ItemGroup>
+</Project>

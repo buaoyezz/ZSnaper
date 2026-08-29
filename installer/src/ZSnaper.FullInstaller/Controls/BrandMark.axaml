@@ -1,0 +1,15 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="ZSnaper.FullInstaller.Controls.BrandMark">
+  <Viewbox Stretch="Uniform">
+    <Canvas Width="100" Height="122">
+      <!-- Exact geometry from assets/logo/icon-dark.svg. -->
+      <Path Fill="White" Data="M7 0 L10 48 L35 73 L56 50 Z" />
+      <Path Fill="White" Data="M81 30 L61 51 L82 72 Z" />
+      <Path Fill="White" Data="M85 32 L85 47 L99 47 Z" />
+      <Path Fill="White" Data="M80 76 L59 54 L36 76 Z" />
+      <Path Fill="White" Data="M0 79 L19 98 L38 80 Z" />
+      <Path Fill="White" Data="M80 79 L42 79 L42 117 Z" />
+    </Canvas>
+  </Viewbox>
+</UserControl>

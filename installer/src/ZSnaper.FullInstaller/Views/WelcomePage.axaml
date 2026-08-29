@@ -1,0 +1,104 @@
+﻿<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="using:ZSnaper.FullInstaller.Controls"
+             x:Class="ZSnaper.FullInstaller.Views.WelcomePage">
+  <Grid Margin="48,16,48,22" RowDefinitions="Auto,*,Auto,Auto">
+    <!-- 1. Hero 品牌视觉区 -->
+    <StackPanel Grid.Row="0" HorizontalAlignment="Center" Spacing="10" Margin="0,4,0,16">
+      <!-- 磨砂玻璃 Logo 容器与微光 -->
+      <Grid Width="72" Height="72" HorizontalAlignment="Center">
+        <Ellipse Width="64" Height="64" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.5">
+          <Ellipse.Fill>
+            <RadialGradientBrush>
+              <GradientStop Offset="0" Color="#5010B981" />
+              <GradientStop Offset="1" Color="#0010B981" />
+            </RadialGradientBrush>
+          </Ellipse.Fill>
+          <Ellipse.Effect><BlurEffect Radius="20" /></Ellipse.Effect>
+        </Ellipse>
+        <Border Background="#20151C28" BorderBrush="#35465F" BorderThickness="1" CornerRadius="18"
+                Width="64" Height="64" HorizontalAlignment="Center" VerticalAlignment="Center">
+          <Border Classes="hero-float" Width="44" Height="50" HorizontalAlignment="Center" VerticalAlignment="Center">
+            <controls:BrandMark />
+          </Border>
+        </Border>
+      </Grid>
+
+      <!-- 品牌名与标语 -->
+      <StackPanel Spacing="3" HorizontalAlignment="Center">
+        <TextBlock Text="ZSNΛPΞR"
+                   FontFamily="Segoe UI, Microsoft YaHei UI"
+                   FontSize="26"
+                   FontWeight="Bold"
+                   Foreground="White"
+                   HorizontalAlignment="Center" />
+        <TextBlock Text="Zip · Snip · Faster"
+                   FontFamily="Segoe UI, Microsoft YaHei UI"
+                   FontSize="12.5"
+                   FontWeight="SemiBold"
+                   Foreground="#34D399"
+                   HorizontalAlignment="Center" />
+      </StackPanel>
+
+      <TextBlock Text="极简、极速、无广告打扰的 Windows 原生截图与本地 OCR 效率工具"
+                 Classes="muted"
+                 FontSize="12"
+                 HorizontalAlignment="Center" />
+    </StackPanel>
+
+    <!-- 2. 核心特性：三栏精致磨砂卡片 -->
+    <Grid Grid.Row="1" ColumnDefinitions="*,12,*,12,*" VerticalAlignment="Center" Margin="0,0,0,18">
+      <!-- 特性卡片 1 -->
+      <Border Grid.Column="0" Classes="feature-card" Padding="14,12">
+        <StackPanel Spacing="6">
+          <Border Width="24" Height="24" CornerRadius="7" Background="#152822" BorderBrush="#1B4D3E" BorderThickness="1" HorizontalAlignment="Left">
+            <TextBlock Text="⚡" FontSize="11" HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <TextBlock Text="毫秒级极速响应" FontWeight="SemiBold" Foreground="White" FontSize="12.5" />
+          <TextBlock Text="冷启动轻量低开销，按下快捷键即刻捕获。" Classes="muted" FontSize="11" TextWrapping="Wrap" LineHeight="16" />
+        </StackPanel>
+      </Border>
+
+      <!-- 特性卡片 2 -->
+      <Border Grid.Column="2" Classes="feature-card" Padding="14,12">
+        <StackPanel Spacing="6">
+          <Border Width="24" Height="24" CornerRadius="7" Background="#142336" BorderBrush="#1C3F69" BorderThickness="1" HorizontalAlignment="Left">
+            <TextBlock Text="🔒" FontSize="11" HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <TextBlock Text="100% 离线识别" FontWeight="SemiBold" Foreground="White" FontSize="12.5" />
+          <TextBlock Text="本地 Windows 引擎驱动，隐私数据零泄露。" Classes="muted" FontSize="11" TextWrapping="Wrap" LineHeight="16" />
+        </StackPanel>
+      </Border>
+
+      <!-- 特性卡片 3 -->
+      <Border Grid.Column="4" Classes="feature-card" Padding="14,12">
+        <StackPanel Spacing="6">
+          <Border Width="24" Height="24" CornerRadius="7" Background="#241936" BorderBrush="#4A267A" BorderThickness="1" HorizontalAlignment="Left">
+            <TextBlock Text="🎯" FontSize="11" HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <TextBlock Text="多窗口智能吸附" FontWeight="SemiBold" Foreground="White" FontSize="12.5" />
+          <TextBlock Text="自动探测窗口边界，配备丰富的专业批注。" Classes="muted" FontSize="11" TextWrapping="Wrap" LineHeight="16" />
+        </StackPanel>
+      </Border>
+    </Grid>
+
+    <!-- 3. 操作按钮 -->
+    <StackPanel Grid.Row="2" HorizontalAlignment="Center" Margin="0,0,0,14">
+      <Button x:Name="NextButton" Classes="primary" Width="170" Height="42">
+        <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+          <TextBlock Text="开始安装" FontSize="13.5" />
+          <Path Classes="arrow" Width="14" Height="14" Stretch="Uniform"
+                Stroke="#042F24" StrokeThickness="2.2"
+                StrokeLineCap="Round" StrokeJoin="Round"
+                Data="M2 8 L14 8 M9 3 L14 8 L9 13" />
+        </StackPanel>
+      </Button>
+    </StackPanel>
+
+    <!-- 4. 底部极简状态信息 -->
+    <Grid Grid.Row="3" ColumnDefinitions="*,Auto">
+      <TextBlock Text="当前用户独立安装 · 绿色免提权 · 卸载保留配置" Classes="muted" FontSize="11" />
+      <TextBlock Grid.Column="1" Text="Windows 10 / 11 · x64" Classes="muted" FontSize="11" />
+    </Grid>
+  </Grid>
+</UserControl>
