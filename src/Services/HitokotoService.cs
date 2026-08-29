@@ -47,7 +47,7 @@ public static class HitokotoService
             BaseAddress = new Uri("https://v1.hitokoto.cn/"),
             Timeout = TimeSpan.FromSeconds(3)
         };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("ZSnaper/0.0.2");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("ZSnaper/0.0.3");
         client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
         return client;
     }

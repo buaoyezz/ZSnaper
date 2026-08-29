@@ -10,8 +10,8 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <AssemblyName>ZSnaper</AssemblyName>
     <RootNamespace>ZSnaper</RootNamespace>
-    <Version>0.0.2-alpha</Version>
-    <InformationalVersion>0.0.2-alpha</InformationalVersion>
+    <Version>0.0.3-alpha</Version>
+    <InformationalVersion>0.0.3-alpha</InformationalVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationIcon>assets\logo\ZSnaper.ico</ApplicationIcon>
   </PropertyGroup>
