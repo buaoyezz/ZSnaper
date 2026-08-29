@@ -21,29 +21,49 @@ public static class PluginManifestService
     {
         var errors = new List<string>();
 
+        if (manifest is null)
+        {
+            errors.Add("Plugin manifest is null.");
+            return errors;
+        }
+
         if (manifest.ManifestVersion != PluginContract.ManifestVersion)
         {
-            errors.Add($"不支持的 manifestVersion: {manifest.ManifestVersion}");
+            errors.Add($"Unsupported manifestVersion: {manifest.ManifestVersion}.");
         }
 
-        if (!PluginIdPattern.IsMatch(manifest.Id)) errors.Add("id 必须是 2-128 位字母、数字、点、下划线或短横线。");
-        if (string.IsNullOrWhiteSpace(manifest.Name)) errors.Add("缺少插件名称 name。");
-        if (!IsVersion(manifest.Version)) errors.Add("version 必须是语义化版本号。");
-        if (string.IsNullOrWhiteSpace(manifest.Entry.Assembly)) errors.Add("缺少 entry.assembly。");
-        if (string.IsNullOrWhiteSpace(manifest.Entry.Type)) errors.Add("缺少 entry.type。");
-
-        if (!PluginCompatibility.IsCompatible(manifest, appVersion, apiVersion))
+        if (string.IsNullOrWhiteSpace(manifest.Id) || !PluginIdPattern.IsMatch(manifest.Id))
         {
-            errors.Add("插件声明的 App/API 版本范围与当前宿主不兼容。");
+            errors.Add("id must contain 2-128 letters, digits, dots, underscores, or hyphens.");
         }
 
-        if (manifest.Update is not null)
+        if (string.IsNullOrWhiteSpace(manifest.Name)) errors.Add("Missing plugin name.");
+        if (!IsVersion(manifest.Version)) errors.Add("version must be a semantic version.");
+
+        if (manifest.Entry is null)
         {
-            if (!Uri.TryCreate(manifest.Update.CheckUrl, UriKind.Absolute, out Uri? uri) ||
-                uri.Scheme != Uri.UriSchemeHttps)
-            {
-                errors.Add("update.checkUrl 必须是 HTTPS 地址。");
-            }
+            errors.Add("Missing entry metadata.");
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(manifest.Entry.Assembly)) errors.Add("Missing entry.assembly.");
+            if (string.IsNullOrWhiteSpace(manifest.Entry.Type)) errors.Add("Missing entry.type.");
+        }
+
+        if (manifest.Requires is null)
+        {
+            errors.Add("Missing requires metadata.");
+        }
+        else if (!PluginCompatibility.IsCompatible(manifest, appVersion, apiVersion))
+        {
+            errors.Add("The plugin is incompatible with the current App/API versions.");
+        }
+
+        if (manifest.Update is not null &&
+            (!Uri.TryCreate(manifest.Update.CheckUrl, UriKind.Absolute, out Uri? uri) ||
+             uri.Scheme != Uri.UriSchemeHttps))
+        {
+            errors.Add("update.checkUrl must be an HTTPS URL.");
         }
 
         return errors;

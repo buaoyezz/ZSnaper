@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <Compile Remove="src\Plugin.Abstractions\**" />
+    <Compile Remove="installer\**" />
     <ProjectReference Include="src\Plugin.Abstractions\ZSnaper.Plugin.Abstractions.csproj" />
   </ItemGroup>
 
