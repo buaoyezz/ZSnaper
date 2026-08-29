@@ -93,3 +93,6 @@ ZSnaper 基于 [GNU General Public License v3.0](LICENSE) 开源协议发布
 你可以在该条款下自由使用、研究、修改和重新分发本项目
 
 Copyright © 2026 [ZZBuAoYe](https://github.com/buaoyezz). All rights reserved.
+
+## 友链
+[LINUX DO](https://linux.do)
