@@ -35,6 +35,7 @@ public class MainForm : Form
     private string? _latestUpdateUrl;
     private Action<HotkeyCommand, HotkeyGesture>? _recordedHotkeyHandler;
     private Action? _cancelRecordedHotkeyHandler;
+    private Action<string>? _hotkeyRecordingFeedbackHandler;
     private readonly CancellationTokenSource _welcomeQuoteCancellation = new();
     private string _welcomeQuote = "保持好奇，保持创造。";
     private string? _welcomeQuoteSource = "ZSnaper";
@@ -51,6 +52,9 @@ public class MainForm : Form
         _recordedHotkeyHandler?.Invoke(command, gesture);
 
     public void CancelRecordedHotkey() => _cancelRecordedHotkeyHandler?.Invoke();
+
+    public void ShowHotkeyRecordingFeedback(string message) =>
+        _hotkeyRecordingFeedbackHandler?.Invoke(message);
 
     public MainForm()
     {
@@ -184,6 +188,11 @@ public class MainForm : Form
         catch (JsonException)
         {
             // Ignore malformed responses and keep the local sentence.
+        }
+        catch (Exception exception)
+        {
+            AppDiagnostics.LogException("MainForm.LoadReleaseQuote", exception);
+            // The optional welcome sentence must never affect the main window.
         }
     }
 
@@ -778,10 +787,16 @@ public class MainForm : Form
         };
         descriptionLabel.Size = new Size(contentWidth, 18);
 
-        HotkeyGesture captureGesture = HotkeyGesture.TryParse(ConfigService.Current.CaptureHotkey, out HotkeyGesture parsedCapture)
+        HotkeyGesture captureGesture = HotkeyGesture.TryParse(
+                ConfigService.Current.CaptureHotkey,
+                out HotkeyGesture parsedCapture,
+                ConfigService.Current.CaptureHotkeyForceBinding)
             ? parsedCapture
             : new HotkeyGesture(Keys.Q, Keys.Alt);
-        HotkeyGesture ocrGesture = HotkeyGesture.TryParse(ConfigService.Current.OcrHotkey, out HotkeyGesture parsedOcr)
+        HotkeyGesture ocrGesture = HotkeyGesture.TryParse(
+                ConfigService.Current.OcrHotkey,
+                out HotkeyGesture parsedOcr,
+                ConfigService.Current.OcrHotkeyForceBinding)
             ? parsedOcr
             : new HotkeyGesture(Keys.X, Keys.Alt);
         Label feedbackLabel = null!;
@@ -832,6 +847,8 @@ public class MainForm : Form
 
         captureRecorder.Feedback += ShowFeedback;
         ocrRecorder.Feedback += ShowFeedback;
+        _hotkeyRecordingFeedbackHandler = message =>
+            ShowFeedback(new HotkeyChangeResult(false, message));
 
         _recordedHotkeyHandler = (command, gesture) =>
         {
@@ -927,6 +944,7 @@ public class MainForm : Form
         {
             _recordedHotkeyHandler = null;
             _cancelRecordedHotkeyHandler = null;
+            _hotkeyRecordingFeedbackHandler = null;
         };
 
         panel.Controls.Add(titleLabel);
@@ -1004,10 +1022,16 @@ public class MainForm : Form
             forceButton = createdForceButton;
             void RefreshForceButton()
             {
-                createdForceButton.Text = forceBinding ? "解除强力" : "强力绑定";
-                createdForceButton.AccessibleName = forceBinding ? "解除强力绑定" : "强力绑定";
+                bool isForceRecording = createdRecorder.IsRecording && createdRecorder.IsForceRecording;
+                createdForceButton.Text = isForceRecording
+                    ? "取消强力录制"
+                    : forceBinding ? "解除强力" : "强力绑定";
+                createdForceButton.AccessibleName = isForceRecording
+                    ? "取消强力录制"
+                    : forceBinding ? "解除强力绑定" : "强力绑定";
                 createdForceButton.Invalidate();
             }
+            createdRecorder.RecordingStateChanged += RefreshForceButton;
 
             createdRecorder.TryCommit = (proposed, useForceBinding) =>
             {
@@ -1023,6 +1047,20 @@ public class MainForm : Form
             };
             createdForceButton.Click += (_, _) =>
             {
+                if (createdRecorder.IsRecording)
+                {
+                    if (createdRecorder.IsForceRecording)
+                    {
+                        createdRecorder.CancelExternalRecording();
+                    }
+                    else
+                    {
+                        createdRecorder.StartRecording(forceBinding: true);
+                    }
+
+                    return;
+                }
+
                 if (forceBinding)
                 {
                     HotkeyChangeResult result = RequestHotkeyChange?.Invoke(command, createdRecorder.Gesture, false)

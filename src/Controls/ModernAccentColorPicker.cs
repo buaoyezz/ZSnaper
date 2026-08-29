@@ -125,5 +125,10 @@ public class ModernAccentColorPicker : Control
     {
         return Math.Abs(c1.R - c2.R) < 15 && Math.Abs(c1.G - c2.G) < 15 && Math.Abs(c1.B - c2.B) < 15;
     }
-}
 
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) ThemeManager.ThemeChanged -= Invalidate;
+        base.Dispose(disposing);
+    }
+}

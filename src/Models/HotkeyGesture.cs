@@ -17,6 +17,11 @@ public readonly record struct HotkeyGesture(Keys KeyCode, Keys Modifiers)
         !IsModifierKey(KeyCode) &&
         ((Modifiers & SupportedModifiers) != Keys.None || IsStandaloneKey(KeyCode));
 
+    public bool IsValidForForceBinding =>
+        KeyCode != Keys.None &&
+        KeyCode != Keys.Escape &&
+        !IsModifierKey(KeyCode);
+
     public string DisplayText => string.Join(" + ", GetParts());
 
     public string ConfigText => string.Join("+", GetParts());
@@ -24,7 +29,10 @@ public readonly record struct HotkeyGesture(Keys KeyCode, Keys Modifiers)
     public static HotkeyGesture FromKeyEvent(KeyEventArgs e) =>
         new(e.KeyCode, e.Modifiers & SupportedModifiers);
 
-    public static bool TryParse(string? value, out HotkeyGesture gesture)
+    public static bool TryParse(
+        string? value,
+        out HotkeyGesture gesture,
+        bool forceBinding = false)
     {
         gesture = default;
         if (string.IsNullOrWhiteSpace(value))
@@ -65,13 +73,14 @@ public readonly record struct HotkeyGesture(Keys KeyCode, Keys Modifiers)
         }
 
         gesture = new HotkeyGesture(keyCode, modifiers);
-        return gesture.IsValid;
+        return forceBinding ? gesture.IsValidForForceBinding : gesture.IsValid;
     }
 
     public static bool IsModifierKey(Keys keyCode) => keyCode is
         Keys.ControlKey or Keys.LControlKey or Keys.RControlKey or
         Keys.ShiftKey or Keys.LShiftKey or Keys.RShiftKey or
-        Keys.Menu or Keys.LMenu or Keys.RMenu;
+        Keys.Menu or Keys.LMenu or Keys.RMenu or
+        Keys.LWin or Keys.RWin;
 
     private static bool IsStandaloneKey(Keys keyCode) => keyCode == Keys.PrintScreen;
 

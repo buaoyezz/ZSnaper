@@ -66,6 +66,15 @@ public static class ConfigService
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "ZSnaper",
         "config.json");
+    private static readonly string BackupPath = ConfigPath + ".bak";
+    private static readonly string InvalidPath = ConfigPath + ".corrupt";
+    private static readonly object SyncRoot = new();
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true,
+        AllowTrailingCommas = true,
+        ReadCommentHandling = JsonCommentHandling.Skip
+    };
 
     public static AppConfig Current { get; private set; } = new();
 
@@ -78,114 +87,56 @@ public static class ConfigService
 
     public static void Load()
     {
-        try
+        lock (SyncRoot)
         {
-            if (File.Exists(ConfigPath))
+            bool recoveredFromBackup = false;
+            if (ConfigFileStore.TryRead(ConfigPath, JsonOptions, out AppConfig loaded))
             {
-                var json = File.ReadAllText(ConfigPath);
-                Current = JsonSerializer.Deserialize<AppConfig>(json) ?? new();
-                NormalizeCaptureToolbar();
-                NormalizeUpdateSettings();
-                NormalizeTrayIconSettings();
+                Current = loaded;
+            }
+            else if (ConfigFileStore.TryRead(BackupPath, JsonOptions, out loaded))
+            {
+                Current = loaded;
+                recoveredFromBackup = true;
+            }
+            else
+            {
+                Current = new AppConfig();
+            }
+
+            AppConfigSanitizer.Normalize(Current);
+            // 注册表是开机启动的真实来源，配置文件只负责保存 UI 状态。
+            Current.AutoStartOnBoot = IsAutoStartEnabled();
+
+            if (recoveredFromBackup)
+            {
+                TryRestoreRecoveredConfiguration();
             }
         }
-        catch
-        {
-            Current = new();
-        }
-
-        // 注册表是开机启动的真实来源，配置文件只负责保存 UI 状态。
-        Current.AutoStartOnBoot = IsAutoStartEnabled();
     }
 
-    private static void NormalizeCaptureToolbar()
+    public static bool Save()
     {
-        Current.CaptureToolbarItems ??= [];
-        Current.CaptureToolbarOrder ??= [];
-
-        if (Current.CaptureToolbarLayout != CaptureToolbarLayout.Custom)
-        {
-            Current.CaptureToolbarItems = CaptureToolbarDefaults.CreateLayout(Current.CaptureToolbarLayout);
-            Current.CaptureToolbarOrder = CaptureToolbarDefaults.CreateItems();
-            return;
-        }
-
-        if (!Current.CaptureToolbarOrder.Contains(CaptureToolbarItem.ScrollCapture))
-        {
-            int insertAt = Current.CaptureToolbarOrder.IndexOf(CaptureToolbarItem.Ocr);
-            if (insertAt < 0) insertAt = Current.CaptureToolbarOrder.Count;
-            Current.CaptureToolbarOrder.Insert(insertAt, CaptureToolbarItem.ScrollCapture);
-        }
-    }
-
-    private static void NormalizeUpdateSettings()
-    {
-        if (Current.UpdateCheckIntervalHours is not (6 or 12 or 24 or 168))
-        {
-            Current.UpdateCheckIntervalHours = 24;
-        }
-    }
-
-    private static void NormalizeTrayIconSettings()
-    {
-        if (!Enum.IsDefined(Current.TrayIconStyle))
-        {
-            Current.TrayIconStyle = TrayIconStyle.FollowTheme;
-        }
-
-        Current.TrayIconCustomPalette ??= [];
-        Current.TrayIconCustomPalette = Current.TrayIconCustomPalette
-            .Where(IsValidHexColor)
-            .Take(16)
-            .ToList();
-
-        if (Current.TrayIconCustomPalette.Count == 0)
-        {
-            Current.TrayIconCustomPalette = new AppConfig().TrayIconCustomPalette;
-        }
-
-        if (!IsValidHexColor(Current.TrayIconLightColorHex))
-        {
-            Current.TrayIconLightColorHex = "#383C40";
-        }
-
-        if (!IsValidHexColor(Current.TrayIconDarkColorHex))
-        {
-            Current.TrayIconDarkColorHex = "#FFFFFF";
-        }
-
-        Current.TrayIconScalePercent = Math.Clamp(Current.TrayIconScalePercent, 80, 160);
-    }
-
-    private static bool IsValidHexColor(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return false;
-
+        bool saved;
         try
         {
-            _ = ColorTranslator.FromHtml(value);
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
+            lock (SyncRoot)
+            {
+                AppConfigSanitizer.Normalize(Current);
+                string json = JsonSerializer.Serialize(Current, JsonOptions);
+                ConfigFileStore.WriteAtomic(ConfigPath, json, BackupPath, backupExisting: true);
+            }
 
-    public static void Save()
-    {
-        try
-        {
-            var dir = Path.GetDirectoryName(ConfigPath);
-            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-            var json = JsonSerializer.Serialize(Current, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(ConfigPath, json);
-            ConfigChanged?.Invoke();
+            saved = true;
         }
-        catch
+        catch (Exception exception)
         {
-            // Ignore write errors
+            AppDiagnostics.LogException("ConfigService.Save", exception);
+            saved = false;
         }
+
+        if (saved) NotifyConfigChanged();
+        return saved;
     }
 
     public static string GetEffectiveSavePath()
@@ -203,8 +154,7 @@ public static class ConfigService
         try
         {
             using var key = Registry.CurrentUser.OpenSubKey(StartupRegistryPath, false);
-            return key?.GetValue(StartupValueName) is string command &&
-                   !string.IsNullOrWhiteSpace(command);
+            return key?.GetValue(StartupValueName) is string command && IsValidStartupCommand(command);
         }
         catch
         {
@@ -245,6 +195,7 @@ public static class ConfigService
     public static void ResetToDefaults()
     {
         Current = new AppConfig();
+        Current.AutoStartOnBoot = IsAutoStartEnabled();
         Save();
     }
 
@@ -257,5 +208,66 @@ public static class ConfigService
             AnimationLevel.Elegant => (int)(baseDurationMs * 1.6),
             _ => baseDurationMs
         };
+    }
+
+    private static void NotifyConfigChanged()
+    {
+        Delegate[] subscribers = ConfigChanged?.GetInvocationList() ?? [];
+        foreach (Action subscriber in subscribers.Cast<Action>())
+        {
+            try
+            {
+                subscriber();
+            }
+            catch (Exception exception)
+            {
+                AppDiagnostics.LogException("ConfigService.ConfigChanged", exception);
+                // One UI subscriber must not block the remaining configuration listeners.
+            }
+        }
+    }
+
+    private static void TryRestoreRecoveredConfiguration()
+    {
+        try
+        {
+            if (File.Exists(ConfigPath)) File.Copy(ConfigPath, InvalidPath, overwrite: true);
+            string json = JsonSerializer.Serialize(Current, JsonOptions);
+            ConfigFileStore.WriteAtomic(ConfigPath, json, BackupPath, backupExisting: false);
+        }
+        catch (Exception exception)
+        {
+            AppDiagnostics.LogException("ConfigService.Recover", exception);
+            // The in-memory backup is still usable for this session.
+        }
+    }
+
+    private static bool IsValidStartupCommand(string command)
+    {
+        if (string.IsNullOrWhiteSpace(command)) return false;
+
+        string trimmed = command.Trim();
+        string executablePath;
+        string arguments;
+        if (trimmed.StartsWith('"'))
+        {
+            int closingQuote = trimmed.IndexOf('"', 1);
+            if (closingQuote <= 1) return false;
+            executablePath = trimmed[1..closingQuote];
+            arguments = trimmed[(closingQuote + 1)..];
+        }
+        else
+        {
+            int separator = trimmed.IndexOf(' ');
+            executablePath = separator < 0 ? trimmed : trimmed[..separator];
+            arguments = separator < 0 ? string.Empty : trimmed[separator..];
+        }
+
+        bool hasStartupArgument = arguments
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Any(argument => string.Equals(argument, StartupArgument, StringComparison.OrdinalIgnoreCase));
+        return string.Equals(Path.GetFileName(executablePath), "ZSnaper.exe", StringComparison.OrdinalIgnoreCase) &&
+               hasStartupArgument &&
+               File.Exists(executablePath);
     }
 }

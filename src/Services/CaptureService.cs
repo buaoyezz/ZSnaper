@@ -6,15 +6,30 @@ namespace ZSnaper.Services;
 
 public static class CaptureService
 {
+    private static int _saveSequence;
+
     /// <summary>
     /// 截取指定虚拟屏幕区域
     /// </summary>
     public static Bitmap CaptureScreen(Rectangle bounds)
     {
-        var bmp = new Bitmap(bounds.Width, bounds.Height);
-        using var g = Graphics.FromImage(bmp);
-        g.CopyFromScreen(bounds.X, bounds.Y, 0, 0, bounds.Size, CopyPixelOperation.SourceCopy);
-        return bmp;
+        if (bounds.Width <= 0 || bounds.Height <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(bounds), "The capture area must have a positive size.");
+        }
+
+        var bitmap = new Bitmap(bounds.Width, bounds.Height);
+        try
+        {
+            using Graphics graphics = Graphics.FromImage(bitmap);
+            graphics.CopyFromScreen(bounds.X, bounds.Y, 0, 0, bounds.Size, CopyPixelOperation.SourceCopy);
+            return bitmap;
+        }
+        catch
+        {
+            bitmap.Dispose();
+            throw;
+        }
     }
 
     /// <summary>
@@ -89,11 +104,34 @@ public static class CaptureService
     /// </summary>
     public static string SaveToPictures(Bitmap bmp)
     {
-        var dir = ConfigService.GetEffectiveSavePath();
-        Directory.CreateDirectory(dir);
-        var filePath = Path.Combine(dir, $"ZSnaper_{DateTime.Now:yyyyMMdd_HHmmss_fff}.png");
+        return SaveToDirectory(bmp, ConfigService.GetEffectiveSavePath());
+    }
+
+    internal static string SaveToDirectory(Bitmap bmp, string directory)
+    {
+        ArgumentNullException.ThrowIfNull(bmp);
+        ArgumentException.ThrowIfNullOrWhiteSpace(directory);
+        Directory.CreateDirectory(directory);
+        int sequence = (int)((uint)Interlocked.Increment(ref _saveSequence) % 1000);
+        string filePath = Path.Combine(directory, $"ZSnaper_{DateTime.Now:yyyyMMdd_HHmmss_fff}_{sequence:D3}.png");
         bmp.Save(filePath, ImageFormat.Png);
         return filePath;
+    }
+
+    public static bool TrySaveToPictures(Bitmap bmp, out string? filePath, out string? errorMessage)
+    {
+        try
+        {
+            filePath = SaveToPictures(bmp);
+            errorMessage = null;
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ExternalException or ArgumentException)
+        {
+            filePath = null;
+            errorMessage = exception.Message;
+            return false;
+        }
     }
 
     /// <summary>
@@ -101,15 +139,8 @@ public static class CaptureService
     /// </summary>
     public static bool TryCopyToClipboard(Bitmap bmp)
     {
-        try
-        {
-            Clipboard.SetImage(bmp);
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
+        ArgumentNullException.ThrowIfNull(bmp);
+        return TryClipboardOperation(() => Clipboard.SetImage(bmp));
     }
 
     /// <summary>
@@ -117,15 +148,30 @@ public static class CaptureService
     /// </summary>
     public static bool TryCopyTextToClipboard(string text)
     {
-        try
+        if (string.IsNullOrEmpty(text)) return false;
+        return TryClipboardOperation(() => Clipboard.SetText(text));
+    }
+
+    private static bool TryClipboardOperation(Action operation)
+    {
+        for (int attempt = 0; attempt < 3; attempt++)
         {
-            Clipboard.SetText(text);
-            return true;
+            try
+            {
+                operation();
+                return true;
+            }
+            catch (ExternalException) when (attempt < 2)
+            {
+                Thread.Sleep(15 * (attempt + 1));
+            }
+            catch
+            {
+                return false;
+            }
         }
-        catch
-        {
-            return false;
-        }
+
+        return false;
     }
 }
 

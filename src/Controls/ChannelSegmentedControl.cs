@@ -167,6 +167,7 @@ public class ChannelSegmentedControl : Control
     {
         if (disposing)
         {
+            ThemeManager.ThemeChanged -= Invalidate;
             ConfigService.ConfigChanged -= OnConfigChanged;
             _animTimer.Stop();
             _animTimer.Dispose();

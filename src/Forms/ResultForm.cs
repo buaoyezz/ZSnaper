@@ -15,6 +15,7 @@ public class ResultForm : Form
     private readonly ModernButton _closeBtn;
     private readonly Label _titleLabel;
     private readonly Label _countLabel;
+    private readonly System.Windows.Forms.Timer _copyFeedbackTimer;
 
     public ResultForm()
     {
@@ -82,15 +83,20 @@ public class ResultForm : Form
             Size = new Size(112, 32),
             Location = new Point(14, 6)
         };
+        _copyFeedbackTimer = new System.Windows.Forms.Timer { Interval = 1200 };
+        _copyFeedbackTimer.Tick += (_, _) =>
+        {
+            _copyFeedbackTimer.Stop();
+            if (!IsDisposed) _copyBtn.Text = "复制文本";
+        };
         _copyBtn.Click += (_, _) =>
         {
             if (_text.TextLength > 0)
             {
-                CaptureService.TryCopyTextToClipboard(_text.Text);
-                _copyBtn.Text = "已复制";
-                var t = new System.Windows.Forms.Timer { Interval = 1200 };
-                t.Tick += (s, e) => { _copyBtn.Text = "复制文本"; t.Stop(); t.Dispose(); };
-                t.Start();
+                bool copied = CaptureService.TryCopyTextToClipboard(_text.Text);
+                _copyBtn.Text = copied ? "已复制" : "复制失败";
+                _copyFeedbackTimer.Stop();
+                _copyFeedbackTimer.Start();
             }
         };
 
@@ -171,5 +177,16 @@ public class ResultForm : Form
         _text.Text = text;
         Show();
         Activate();
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _copyFeedbackTimer.Stop();
+            _copyFeedbackTimer.Dispose();
+        }
+
+        base.Dispose(disposing);
     }
 }

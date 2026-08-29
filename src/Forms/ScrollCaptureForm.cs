@@ -27,6 +27,7 @@ internal sealed class ScrollCaptureForm : Form
     private bool _autoCapturing;
     private bool _captureTickBusy;
     private bool _closing;
+    private bool _resourcesDisposed;
     private ScrollModeAction _hoveredAction;
     private ScrollModeAction _pressedAction;
     private string _statusText = "请缓慢滚动页面，或点击自动滚动";
@@ -170,6 +171,20 @@ internal sealed class ScrollCaptureForm : Form
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
+        DisposeManagedResources();
+        base.OnFormClosed(e);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) DisposeManagedResources();
+        base.Dispose(disposing);
+    }
+
+    private void DisposeManagedResources()
+    {
+        if (_resourcesDisposed) return;
+        _resourcesDisposed = true;
         _captureTimer.Stop();
         _captureTimer.Dispose();
         _lifetimeCancellation.Cancel();
@@ -178,7 +193,6 @@ internal sealed class ScrollCaptureForm : Form
         _scroller?.Dispose();
         _background.Dispose();
         ThemeManager.ThemeChanged -= OnThemeChanged;
-        base.OnFormClosed(e);
     }
 
     private void CaptureTimerTick(object? sender, EventArgs e)
@@ -221,7 +235,10 @@ internal sealed class ScrollCaptureForm : Form
         }
         catch (Exception ex)
         {
+            AppDiagnostics.LogException("ScrollCaptureForm.CaptureTimer", ex);
             _statusText = "捕获失败：" + ex.Message;
+            _captureTimer.Stop();
+            ShowTransientHint();
             Invalidate(GetToolbarBounds());
         }
         finally
@@ -263,20 +280,36 @@ internal sealed class ScrollCaptureForm : Form
         Invalidate();
         Update();
 
-        ScrollCaptureResult result = await ScrollCaptureService.ContinueCaptureAsync(
-            _screenBounds,
-            _assembler,
-            _lifetimeCancellation.Token,
-            (_, height) =>
-            {
-                _statusText = $"正在自动滚动 · 已捕获 {height:N0} px";
-                Invalidate(GetToolbarBounds());
-                Invalidate(GetDimensionBadgeBounds());
-                Update();
-            },
-            _scroller);
+        ScrollCaptureResult result;
+        try
+        {
+            result = await ScrollCaptureService.ContinueCaptureAsync(
+                _screenBounds,
+                _assembler,
+                _lifetimeCancellation.Token,
+                (_, height) =>
+                {
+                    if (_closing || IsDisposed) return;
+                    _statusText = $"正在自动滚动 · 已捕获 {height:N0} px";
+                    Invalidate(GetToolbarBounds());
+                    Invalidate(GetDimensionBadgeBounds());
+                    Update();
+                },
+                _scroller);
+        }
+        catch (Exception exception)
+        {
+            AppDiagnostics.LogException("ScrollCaptureForm.StartAutoScroll", exception);
+            if (_closing || IsDisposed) return;
+            _autoCapturing = false;
+            _statusText = "自动滚动失败：" + exception.Message;
+            ShowTransientHint();
+            _captureTimer.Start();
+            Invalidate();
+            return;
+        }
 
-        if (_closing) return;
+        if (_closing || IsDisposed) return;
         if (result.Reason == ScrollCaptureStopReason.Cancelled)
         {
             CancelCapture();
@@ -309,7 +342,22 @@ internal sealed class ScrollCaptureForm : Form
         _captureTimer.Stop();
         Bitmap image = _assembler.BuildImage();
         Close();
-        Completed?.Invoke(image, action);
+        Action<Bitmap, CaptureCompletionAction>? handlers = Completed;
+        if (handlers is null)
+        {
+            image.Dispose();
+            return;
+        }
+
+        try
+        {
+            handlers(image, action);
+        }
+        catch (Exception exception)
+        {
+            image.Dispose();
+            AppDiagnostics.LogException("ScrollCaptureForm.Completed", exception);
+        }
     }
 
     private void CancelCapture()
@@ -319,7 +367,14 @@ internal sealed class ScrollCaptureForm : Form
         _lifetimeCancellation.Cancel();
         _captureTimer.Stop();
         Close();
-        Cancelled?.Invoke();
+        try
+        {
+            Cancelled?.Invoke();
+        }
+        catch (Exception exception)
+        {
+            AppDiagnostics.LogException("ScrollCaptureForm.Cancelled", exception);
+        }
     }
 
     private void DrawSelectionBorder(Graphics graphics)

@@ -134,6 +134,7 @@ public class AnimationSegmentedControl : Control
     {
         if (disposing)
         {
+            ThemeManager.ThemeChanged -= Invalidate;
             _animTimer.Stop();
             _animTimer.Dispose();
         }

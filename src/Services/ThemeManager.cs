@@ -34,7 +34,7 @@ public static class ThemeManager
                 ConfigService.Current.Theme = value;
                 ConfigService.Save();
                 RebuildPalette();
-                ThemeChanged?.Invoke();
+                NotifyThemeChanged();
             }
         }
     }
@@ -50,7 +50,7 @@ public static class ThemeManager
                 ConfigService.Current.AccentColorHex = $"#{value.R:X2}{value.G:X2}{value.B:X2}";
                 ConfigService.Save();
                 RebuildPalette();
-                ThemeChanged?.Invoke();
+                NotifyThemeChanged();
             }
         }
     }
@@ -66,7 +66,7 @@ public static class ThemeManager
                 ConfigService.Current.EnableBackgroundGlow = value;
                 ConfigService.Save();
                 RebuildPalette();
-                ThemeChanged?.Invoke();
+                NotifyThemeChanged();
             }
         }
     }
@@ -83,5 +83,21 @@ public static class ThemeManager
     private static void RebuildPalette()
     {
         Palette = ThemePalette.Create(_currentMode, _accentColor, _enableGlow);
+    }
+
+    private static void NotifyThemeChanged()
+    {
+        Delegate[] subscribers = ThemeChanged?.GetInvocationList() ?? [];
+        foreach (Action subscriber in subscribers.Cast<Action>())
+        {
+            try
+            {
+                subscriber();
+            }
+            catch (Exception exception)
+            {
+                AppDiagnostics.LogException("ThemeManager.ThemeChanged", exception);
+            }
+        }
     }
 }

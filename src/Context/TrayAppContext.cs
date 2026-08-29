@@ -29,6 +29,9 @@ public class TrayAppContext : ApplicationContext
     private readonly CancellationTokenSource _updateCancellation = new();
     private readonly System.Windows.Forms.Timer _updateTimer;
     private bool _updateCheckInProgress;
+    private DateTimeOffset? _lastUpdateAttemptAt;
+    private bool _exitRequested;
+    private bool _disposed;
 
     public TrayAppContext(bool startMinimizedToTray = false)
     {
@@ -59,6 +62,7 @@ public class TrayAppContext : ApplicationContext
         _mainForm.RequestHotkeyRecordingStop += _ => _hotkeyService.EndRecording();
         _hotkeyService.RecordingGestureCaptured += _mainForm.ApplyRecordedHotkey;
         _hotkeyService.RecordingCancelled += _mainForm.CancelRecordedHotkey;
+        _hotkeyService.RecordingFeedback += _mainForm.ShowHotkeyRecordingFeedback;
         _mainForm.RequestUpdateCheck += () => _ = CheckForUpdatesAsync(manual: true);
         _mainForm.RequestOpenUpdate += OpenUpdatePage;
         _mainForm.Shown += (_, _) => CheckForUpdatesIfDue();
@@ -183,8 +187,14 @@ public class TrayAppContext : ApplicationContext
         _ = CheckForUpdatesAsync(manual: false);
     }
 
-    private static bool IsUpdateCheckDue()
+    private bool IsUpdateCheckDue()
     {
+        if (_lastUpdateAttemptAt is { } lastAttempt &&
+            DateTimeOffset.UtcNow - lastAttempt < TimeSpan.FromMinutes(15))
+        {
+            return false;
+        }
+
         DateTimeOffset? lastCheck = ConfigService.Current.LastUpdateCheckAt;
         if (lastCheck is null) return true;
 
@@ -197,15 +207,20 @@ public class TrayAppContext : ApplicationContext
         if (_updateCheckInProgress || _updateCancellation.IsCancellationRequested) return;
 
         _updateCheckInProgress = true;
-        ConfigService.Current.LastUpdateCheckAt = DateTimeOffset.UtcNow;
-        ConfigService.Save();
-        _mainForm.RefreshUpdateCheckInfo();
+        _lastUpdateAttemptAt = DateTimeOffset.UtcNow;
         _mainForm.SetUpdateStatus("检查中…", isBusy: true);
 
         try
         {
             UpdateCheckResult result = await VersionGet.CheckForUpdateAsync(_updateCancellation.Token);
             if (_updateCancellation.IsCancellationRequested || _mainForm.IsDisposed) return;
+
+            if (result.IsSuccess)
+            {
+                ConfigService.Current.LastUpdateCheckAt = DateTimeOffset.UtcNow;
+                ConfigService.Save();
+                _mainForm.RefreshUpdateCheckInfo();
+            }
 
             if (result.IsSuccess && result.HasUpdate && result.LatestRelease is { } release)
             {
@@ -277,8 +292,27 @@ public class TrayAppContext : ApplicationContext
 
     private void StartCapture(bool ocr)
     {
+        if (_disposed || _exitRequested || _overlay.IsDisposed) return;
+        if (_overlay.Visible)
+        {
+            _overlay.Activate();
+            return;
+        }
+
         _ocrMode = ocr;
-        _overlay.BeginCapture();
+        try
+        {
+            _overlay.BeginCapture();
+        }
+        catch (Exception exception)
+        {
+            AppDiagnostics.LogException("TrayAppContext.StartCapture", exception);
+            _tray.ShowBalloonTip(
+                3000,
+                "ZSnaper",
+                "无法开始截图：" + ShortenError(exception.Message),
+                ToolTipIcon.Warning);
+        }
     }
 
     private async void OnCaptured(
@@ -286,54 +320,86 @@ public class TrayAppContext : ApplicationContext
         Point screenPoint,
         CaptureCompletionAction action)
     {
-        using (bitmap)
+        try
         {
-            bool performOcr = action == CaptureCompletionAction.Ocr ||
-                              action == CaptureCompletionAction.Default && _ocrMode;
-            (bool copyImage, bool saveImage) = ResolveCaptureDestinations(action, _ocrMode);
-
-            bool copied = copyImage && CaptureService.TryCopyToClipboard(bitmap);
-            string? savedFilePath = saveImage ? CaptureService.SaveToPictures(bitmap) : null;
-            _captureCount++;
-
-            if (!performOcr)
+            using (bitmap)
             {
-                _mainForm.UpdateHomeOverview(_captureCount, _ocrCount, savedFilePath, wasOcr: false);
-                ShowCaptureNotification(action, copied, savedFilePath);
-                return;
-            }
+                bool performOcr = action == CaptureCompletionAction.Ocr ||
+                                  action == CaptureCompletionAction.Default && _ocrMode;
+                (bool copyImage, bool saveImage) = ResolveCaptureDestinations(action, _ocrMode);
 
-            string text;
-            try
-            {
-                text = await OcrService.RecognizeAsync(bitmap);
-            }
-            catch (Exception ex)
-            {
-                text = "(OCR 失败: " + ex.Message + ")";
-            }
+                bool copied = copyImage && CaptureService.TryCopyToClipboard(bitmap);
+                string? savedFilePath = null;
+                string? saveError = null;
+                if (saveImage)
+                {
+                    CaptureService.TrySaveToPictures(bitmap, out savedFilePath, out saveError);
+                }
 
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                text = "(未识别到文字)";
-            }
-            else if (ConfigService.Current.AutoCleanOcrParagraphs)
-            {
-                text = OcrTextFormatter.Clean(text);
-            }
+                _captureCount++;
 
-            _ocrCount++;
-            _mainForm.UpdateHomeOverview(_captureCount, _ocrCount, savedFilePath, wasOcr: true);
-            CaptureService.TryCopyTextToClipboard(text);
+                if (!performOcr)
+                {
+                    _mainForm.UpdateHomeOverview(_captureCount, _ocrCount, savedFilePath, wasOcr: false);
+                    ShowCaptureNotification(action, copied, savedFilePath, saveError);
+                    return;
+                }
 
-            if (ConfigService.Current.ShowNotification)
-            {
-                _tray.ShowBalloonTip(800, "ZSnaper", "OCR 识别完成，文字已复制到剪贴板", ToolTipIcon.Info);
+                string text;
+                try
+                {
+                    text = await OcrService.RecognizeAsync(bitmap);
+                }
+                catch (Exception ex)
+                {
+                    text = "(OCR 失败: " + ex.Message + ")";
+                }
+
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    text = "(未识别到文字)";
+                }
+                else if (ConfigService.Current.AutoCleanOcrParagraphs)
+                {
+                    text = OcrTextFormatter.Clean(text);
+                }
+
+                _ocrCount++;
+                _mainForm.UpdateHomeOverview(_captureCount, _ocrCount, savedFilePath, wasOcr: true);
+                bool textCopied = CaptureService.TryCopyTextToClipboard(text);
+
+                if (ConfigService.Current.ShowNotification)
+                {
+                    string message = textCopied
+                        ? "OCR 识别完成，文字已复制到剪贴板"
+                        : "OCR 识别完成，但剪贴板暂时不可用";
+                    _tray.ShowBalloonTip(1000, "ZSnaper", message, textCopied ? ToolTipIcon.Info : ToolTipIcon.Warning);
+                    if (saveError is not null)
+                    {
+                        _tray.ShowBalloonTip(2500, "ZSnaper", "保存截图失败：" + ShortenError(saveError), ToolTipIcon.Warning);
+                    }
+                }
+
+                _mainForm.UpdateLatestOcrText(text);
+                if (_result is null || _result.IsDisposed)
+                {
+                    _result = new ResultForm { Icon = CurrentWindowIcon };
+                }
+
+                _result.ShowResult(text, screenPoint);
             }
-
-            _mainForm.UpdateLatestOcrText(text);
-            _result ??= new ResultForm { Icon = CurrentWindowIcon };
-            _result.ShowResult(text, screenPoint);
+        }
+        catch (Exception exception)
+        {
+            AppDiagnostics.LogException("TrayAppContext.OnCaptured", exception);
+            if (!_disposed)
+            {
+                _tray.ShowBalloonTip(
+                    3000,
+                    "ZSnaper",
+                    "处理截图失败：" + ShortenError(exception.Message),
+                    ToolTipIcon.Error);
+            }
         }
     }
 
@@ -376,9 +442,19 @@ public class TrayAppContext : ApplicationContext
     private void ShowCaptureNotification(
         CaptureCompletionAction action,
         bool copied,
-        string? savedFilePath)
+        string? savedFilePath,
+        string? saveError)
     {
         if (!ConfigService.Current.ShowNotification) return;
+
+        if (saveError is not null)
+        {
+            string failure = copied
+                ? "截图已复制，但保存失败："
+                : "保存截图失败：";
+            _tray.ShowBalloonTip(2800, "ZSnaper", failure + ShortenError(saveError), ToolTipIcon.Warning);
+            return;
+        }
 
         string message = action switch
         {
@@ -399,14 +475,11 @@ public class TrayAppContext : ApplicationContext
 
     private void ExitApp()
     {
+        if (_exitRequested) return;
+        _exitRequested = true;
         _updateCancellation.Cancel();
         _updateTimer.Stop();
         _tray.Visible = false;
-        _tray.Dispose();
-        _overlay.Dispose();
-        _result?.Dispose();
-        _mainForm.Dispose();
-        _hotkeyService.Dispose();
         ExitThread();
     }
 
@@ -438,11 +511,14 @@ public class TrayAppContext : ApplicationContext
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing)
+        if (disposing && !_disposed)
         {
+            _disposed = true;
             ThemeManager.ThemeChanged -= ApplyThemeIcon;
             ConfigService.ConfigChanged -= OnUpdateConfigChanged;
             ConfigService.ConfigChanged -= ApplyConfiguredTrayIcon;
+            ConfigService.ConfigChanged -= ApplyHotkeyMenuShortcuts;
+            _updateCancellation.Cancel();
             _updateTimer.Stop();
             _updateTimer.Dispose();
             _trayMenu.Dispose();
@@ -458,6 +534,15 @@ public class TrayAppContext : ApplicationContext
             _darkAppIcon.Dispose();
         }
         base.Dispose(disposing);
+    }
+
+    private static string ShortenError(string? message)
+    {
+        const int maxLength = 140;
+        string normalized = string.IsNullOrWhiteSpace(message)
+            ? "未知错误"
+            : message.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        return normalized.Length <= maxLength ? normalized : normalized[..maxLength] + "…";
     }
 
     private void ApplyConfiguredTrayIcon()

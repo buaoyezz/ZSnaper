@@ -16,11 +16,13 @@ public class HotkeyService : NativeWindow, IDisposable
     private const int WM_APP_RECORD_GESTURE = 0x8001;
     private const int WM_APP_RECORD_CANCELLED = 0x8002;
     private const int WM_APP_FORCE_TRIGGER = 0x8003;
+    private const int WM_APP_RECORD_FEEDBACK = 0x8004;
 
     public event Action? CaptureTriggered;
     public event Action? OcrTriggered;
     public event Action<HotkeyCommand, HotkeyGesture>? RecordingGestureCaptured;
     public event Action? RecordingCancelled;
+    public event Action<string>? RecordingFeedback;
 
     private bool _captureRegistered;
     private bool _ocrRegistered;
@@ -38,7 +40,9 @@ public class HotkeyService : NativeWindow, IDisposable
     private readonly HashSet<KeyCode> _pressedKeys = [];
     private readonly HashSet<KeyCode> _suppressedKeys = [];
     private readonly ConcurrentQueue<(HotkeyCommand Command, HotkeyGesture Gesture)> _pendingGestures = [];
+    private readonly ConcurrentQueue<string> _pendingRecordingFeedback = [];
     private HotkeyCommand? _recordingCommand;
+    private bool _recordingForceBinding;
     private bool _captureWasRegisteredBeforeRecording;
     private bool _ocrWasRegisteredBeforeRecording;
     private int _captureIdBeforeRecording;
@@ -59,10 +63,16 @@ public class HotkeyService : NativeWindow, IDisposable
 
     public void RegisterConfiguredHotkeys(out bool captureOk, out bool ocrOk)
     {
-        _captureGesture = ParseOrDefault(ConfigService.Current.CaptureHotkey, new HotkeyGesture(Keys.Q, Keys.Alt));
-        _ocrGesture = ParseOrDefault(ConfigService.Current.OcrHotkey, new HotkeyGesture(Keys.X, Keys.Alt));
         _captureForceBinding = ConfigService.Current.CaptureHotkeyForceBinding;
         _ocrForceBinding = ConfigService.Current.OcrHotkeyForceBinding;
+        _captureGesture = ParseOrDefault(
+            ConfigService.Current.CaptureHotkey,
+            new HotkeyGesture(Keys.Q, Keys.Alt),
+            _captureForceBinding);
+        _ocrGesture = ParseOrDefault(
+            ConfigService.Current.OcrHotkey,
+            new HotkeyGesture(Keys.X, Keys.Alt),
+            _ocrForceBinding);
 
         if (_ocrGesture == _captureGesture)
         {
@@ -79,9 +89,12 @@ public class HotkeyService : NativeWindow, IDisposable
         HotkeyGesture gesture,
         bool forceBinding = false)
     {
-        if (!gesture.IsValid)
+        bool gestureIsValid = forceBinding
+            ? gesture.IsValidForForceBinding
+            : gesture.IsValid;
+        if (!gestureIsValid)
         {
-            return new HotkeyChangeResult(false, "请按下 PrintScreen，或使用 Ctrl、Alt、Shift 组合键");
+            return CreateInvalidGestureResult(gesture, forceBinding);
         }
 
         HotkeyGesture otherGesture = command == HotkeyCommand.Capture ? _ocrGesture : _captureGesture;
@@ -166,6 +179,7 @@ public class HotkeyService : NativeWindow, IDisposable
         }
 
         _recordingCommand = command;
+        _recordingForceBinding = forceBinding;
         return new HotkeyChangeResult(true, string.Empty);
     }
 
@@ -177,6 +191,7 @@ public class HotkeyService : NativeWindow, IDisposable
         }
 
         _recordingCommand = null;
+        _recordingForceBinding = false;
         List<string> errors = [];
 
         RestoreSuspendedHotkey(
@@ -213,8 +228,11 @@ public class HotkeyService : NativeWindow, IDisposable
         return nativeModifiers;
     }
 
-    private static HotkeyGesture ParseOrDefault(string? value, HotkeyGesture fallback) =>
-        HotkeyGesture.TryParse(value, out HotkeyGesture gesture) ? gesture : fallback;
+    private static HotkeyGesture ParseOrDefault(
+        string? value,
+        HotkeyGesture fallback,
+        bool forceBinding) =>
+        HotkeyGesture.TryParse(value, out HotkeyGesture gesture, forceBinding) ? gesture : fallback;
 
     private bool ActivateConfiguredHotkey(HotkeyCommand command)
     {
@@ -474,10 +492,19 @@ public class HotkeyService : NativeWindow, IDisposable
             }
 
             HotkeyGesture gesture = CreateGestureFromPressedKeys(keyCode);
-            if (gesture.IsValid)
+            bool gestureIsValid = _recordingForceBinding
+                ? gesture.IsValidForForceBinding
+                : gesture.IsValid;
+            if (gestureIsValid)
             {
                 _pendingGestures.Enqueue((_recordingCommand.Value, gesture));
                 NativeMethods.PostMessage(Handle, WM_APP_RECORD_GESTURE, 0, 0);
+            }
+            else
+            {
+                HotkeyChangeResult rejection = CreateInvalidGestureResult(gesture, _recordingForceBinding);
+                _pendingRecordingFeedback.Enqueue(rejection.Message);
+                NativeMethods.PostMessage(Handle, WM_APP_RECORD_FEEDBACK, 0, 0);
             }
 
             return;
@@ -485,7 +512,12 @@ public class HotkeyService : NativeWindow, IDisposable
 
         if (TryGetForceCommand(keyCode, out HotkeyCommand command))
         {
-            _suppressedKeys.UnionWith(_pressedKeys);
+            // Modifier key-down events have already reached the foreground app by the
+            // time the complete gesture is known. Suppressing their key-up events would
+            // leave Ctrl/Alt/Shift logically stuck and break unrelated keys such as Delete.
+            // Only suppress the trigger key so every propagated key-down keeps its matching
+            // key-up event.
+            _suppressedKeys.Add(keyCode);
             e.SuppressEvent = true;
             NativeMethods.PostMessage(Handle, WM_APP_FORCE_TRIGGER, (nint)command, 0);
         }
@@ -706,6 +738,20 @@ public class HotkeyService : NativeWindow, IDisposable
         }
     }
 
+    private static HotkeyChangeResult CreateInvalidGestureResult(HotkeyGesture gesture, bool forceBinding)
+    {
+        if (gesture.KeyCode == Keys.None)
+        {
+            return new HotkeyChangeResult(false, "无法识别这个按键，请换一个按键重试");
+        }
+
+        return new HotkeyChangeResult(
+            false,
+            forceBinding
+                ? $"强力绑定不支持 {gesture.DisplayText}；请按一个非修饰键，Esc 取消"
+                : $"普通绑定不能单独使用 {gesture.DisplayText}；请加 Ctrl、Alt 或 Shift，或点击“强力绑定”后再按该键");
+    }
+
     private HotkeyChangeResult RequestElevatedRestartForRecording(bool forceBinding)
     {
         try
@@ -766,6 +812,13 @@ public class HotkeyService : NativeWindow, IDisposable
         else if (m.Msg == WM_APP_FORCE_TRIGGER)
         {
             TriggerForceCommand((HotkeyCommand)m.WParam.ToInt32());
+        }
+        else if (m.Msg == WM_APP_RECORD_FEEDBACK)
+        {
+            if (_pendingRecordingFeedback.TryDequeue(out string? feedback))
+            {
+                RecordingFeedback?.Invoke(feedback);
+            }
         }
         else if (m.Msg == NativeMethods.WM_HOTKEY)
         {

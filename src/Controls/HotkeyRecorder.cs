@@ -17,6 +17,7 @@ public sealed class HotkeyRecorder : Control
     public Func<HotkeyChangeResult>? EndRecordingRequest { get; set; }
 
     public event Action<HotkeyChangeResult>? Feedback;
+    public event Action? RecordingStateChanged;
 
     public HotkeyGesture Gesture
     {
@@ -29,6 +30,8 @@ public sealed class HotkeyRecorder : Control
     }
 
     public bool IsForceRecording => _isForceRecording;
+
+    public bool IsRecording => _isRecording;
 
     public HotkeyRecorder()
     {
@@ -55,6 +58,12 @@ public sealed class HotkeyRecorder : Control
     protected override void OnClick(EventArgs e)
     {
         base.OnClick(e);
+        if (_isRecording)
+        {
+            CancelExternalRecording();
+            return;
+        }
+
         StartRecording(forceBinding: false);
     }
 
@@ -90,9 +99,16 @@ public sealed class HotkeyRecorder : Control
         }
 
         HotkeyGesture proposed = HotkeyGesture.FromKeyEvent(e);
-        if (!proposed.IsValid)
+        bool gestureIsValid = _isForceRecording
+            ? proposed.IsValidForForceBinding
+            : proposed.IsValid;
+        if (!gestureIsValid)
         {
-            Feedback?.Invoke(new HotkeyChangeResult(false, "请按下 PrintScreen，或使用 Ctrl、Alt、Shift 组合键"));
+            Feedback?.Invoke(new HotkeyChangeResult(
+                false,
+                _isForceRecording
+                    ? "强力绑定请按一个非修饰键，Esc 用于取消"
+                    : "请按下 PrintScreen，或使用 Ctrl、Alt、Shift 组合键"));
             return;
         }
 
@@ -172,7 +188,17 @@ public sealed class HotkeyRecorder : Control
     {
         if (_isRecording)
         {
-            return;
+            if (_isForceRecording == forceBinding)
+            {
+                return;
+            }
+
+            HotkeyChangeResult endResult = FinishRecording();
+            if (!endResult.Success)
+            {
+                Feedback?.Invoke(endResult);
+                return;
+            }
         }
 
         HotkeyChangeResult beginResult = BeginRecordingRequest?.Invoke(forceBinding)
@@ -186,6 +212,7 @@ public sealed class HotkeyRecorder : Control
         Focus();
         _isRecording = true;
         _isForceRecording = forceBinding;
+        RecordingStateChanged?.Invoke();
         Feedback?.Invoke(new HotkeyChangeResult(
             true,
             forceBinding ? "请按下要强力绑定的按键或组合键，Esc 取消" : "请按下新的按键或组合键，Esc 取消"));
@@ -248,6 +275,7 @@ public sealed class HotkeyRecorder : Control
     {
         _isRecording = false;
         _isForceRecording = false;
+        RecordingStateChanged?.Invoke();
         HotkeyChangeResult result = EndRecordingRequest?.Invoke()
             ?? new HotkeyChangeResult(true, string.Empty);
         Invalidate();

@@ -61,6 +61,7 @@ public class OverlayForm : Form
     private bool _committingStyleValue;
     private readonly SkiaRasterLayer _styleBarLayer = new();
     private int _styleBarRenderKey = int.MinValue;
+    private bool _resourcesDisposed;
 
     public event Action<Bitmap, Point, CaptureCompletionAction>? Captured;
     public event Action<string>? CaptureFailed;
@@ -90,7 +91,6 @@ public class OverlayForm : Form
         };
 
         ThemeManager.ThemeChanged += OnThemeChanged;
-        Disposed += (_, _) => ThemeManager.ThemeChanged -= OnThemeChanged;
     }
 
     public void BeginCapture()
@@ -103,11 +103,25 @@ public class OverlayForm : Form
         Location = virtualScreen.Location;
         Size = virtualScreen.Size;
 
+        CapturedCursor? nextCursor = null;
+        Bitmap? nextScreen = null;
+        try
+        {
+            nextCursor = CaptureService.CaptureCursor();
+            nextScreen = CaptureService.CaptureScreen(virtualScreen);
+        }
+        catch
+        {
+            nextCursor?.Dispose();
+            nextScreen?.Dispose();
+            throw;
+        }
+
         _screen?.Dispose();
         DisposePixelatedScreens();
         _capturedCursor?.Dispose();
-        _capturedCursor = CaptureService.CaptureCursor();
-        _screen = CaptureService.CaptureScreen(virtualScreen);
+        _capturedCursor = nextCursor;
+        _screen = nextScreen;
 
         _selection = Rectangle.Empty;
         _hasSelection = false;
@@ -614,16 +628,33 @@ public class OverlayForm : Form
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
+        DisposeManagedResources();
+        base.OnFormClosed(e);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) DisposeManagedResources();
+        base.Dispose(disposing);
+    }
+
+    private void DisposeManagedResources()
+    {
+        if (_resourcesDisposed) return;
+        _resourcesDisposed = true;
+
+        ThemeManager.ThemeChanged -= OnThemeChanged;
         _inlineCaretTimer.Stop();
         _inlineCaretTimer.Dispose();
         _screen?.Dispose();
+        _screen = null;
         DisposePixelatedScreens();
         _capturedCursor?.Dispose();
+        _capturedCursor = null;
         _captureSessionVersion++;
         _scrollCaptureForm?.CancelFromOwner();
         _scrollCaptureForm = null;
         _styleBarLayer.Dispose();
-        base.OnFormClosed(e);
     }
 
     private void CompleteCapture(CaptureCompletionAction action)
@@ -658,7 +689,7 @@ public class OverlayForm : Form
 
         var screenPoint = new Point(Location.X + _selection.X, Location.Y + _selection.Y);
         Hide();
-        Captured?.Invoke(crop, screenPoint, action);
+        PublishCaptured(crop, screenPoint, action);
     }
 
     private async void StartScrollCapture()
@@ -702,7 +733,7 @@ public class OverlayForm : Form
 
                 _scrollCaptureForm = null;
                 ApplyScrollCaptureOverlays(image, selection, screenBounds);
-                Captured?.Invoke(image, screenBounds.Location, action);
+                PublishCaptured(image, screenBounds.Location, action);
             };
             mode.Cancelled += () =>
             {
@@ -740,6 +771,26 @@ public class OverlayForm : Form
         graphics.TranslateTransform(-selection.X, -selection.Y);
         DrawAnnotations(graphics);
         graphics.Restore(annotationState);
+    }
+
+    private void PublishCaptured(Bitmap image, Point screenPoint, CaptureCompletionAction action)
+    {
+        Action<Bitmap, Point, CaptureCompletionAction>? handlers = Captured;
+        if (handlers is null)
+        {
+            image.Dispose();
+            return;
+        }
+
+        try
+        {
+            handlers(image, screenPoint, action);
+        }
+        catch
+        {
+            image.Dispose();
+            throw;
+        }
     }
 
     private void CancelCapture()

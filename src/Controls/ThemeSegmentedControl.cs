@@ -145,6 +145,7 @@ public class ThemeSegmentedControl : Control
     {
         if (disposing)
         {
+            ThemeManager.ThemeChanged -= OnGlobalThemeChanged;
             _animTimer.Stop();
             _animTimer.Dispose();
         }

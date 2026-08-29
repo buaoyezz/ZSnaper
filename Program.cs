@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using ZSnaper.Context;
+using ZSnaper.Services;
 
 namespace ZSnaper;
 
@@ -8,6 +9,7 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        AppDiagnostics.Initialize();
         ApplicationConfiguration.Initialize();
         WaitForPreviousInstance(args);
         bool startMinimizedToTray = args.Any(argument =>
