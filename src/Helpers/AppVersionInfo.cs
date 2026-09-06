@@ -16,12 +16,7 @@ public static class AppVersionInfo
     public static bool IsReleaseBuild =>
         string.Equals(BuildChannel, "Release", StringComparison.OrdinalIgnoreCase);
 
-    public static string? WelcomeChannelLabel => BuildChannel switch
-    {
-        "Alpha" => "ALPHA",
-        "Beta" => "BETA",
-        _ => null
-    };
+    public static string? WelcomeChannelLabel => IsReleaseBuild ? null : "BETA";
 
     public const string BuildNumber = "20260829.1";
     public const string BuildDate = "2026-08-29";
@@ -46,14 +41,6 @@ public static class AppVersionInfo
             return "Release";
         }
 
-        string prereleaseName = versionWithoutMetadata[(separatorIndex + 1)..]
-            .Split('.', 2)[0]
-            .Trim();
-
-        return prereleaseName.Equals("alpha", StringComparison.OrdinalIgnoreCase)
-            ? "Alpha"
-            : prereleaseName.Equals("beta", StringComparison.OrdinalIgnoreCase)
-                ? "Beta"
-                : "Release";
+        return "Beta";
     }
 }

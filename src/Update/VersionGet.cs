@@ -1,4 +1,4 @@
-﻿using System.Net.Http.Headers;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
@@ -126,7 +126,7 @@ public static class VersionGet
     }
 
     /// <summary>
-    /// 检查软件是否有新版本（自动根据当前渠道判断是否包含 Alpha/Beta 预发布版本）
+    /// 检查软件是否有新版本（自动根据当前渠道判断是否包含 Beta 预发布测试版本）
     /// </summary>
     /// <param name="cancellationToken">取消令牌</param>
     /// <returns>检查结果</returns>
@@ -135,7 +135,7 @@ public static class VersionGet
         string currentVer = AppVersionInfo.Version;
         string channel = AppVersionInfo.Channel;
 
-        // 若当前处于 Alpha/Beta 等非正式发布通道，则检索包括 Pre-release 在内的最新版本
+        // 若当前处于 Beta 等测试发布通道，则检索包括 Pre-release 在内的最新版本
         bool includePrerelease = !string.Equals(channel, "Release", StringComparison.OrdinalIgnoreCase);
 
         try
@@ -202,7 +202,7 @@ public static class VersionGet
     /// <summary>
     /// 获取最新的 GitHub Release
     /// </summary>
-    /// <param name="includePrerelease">是否包含预发布版本（Alpha/Beta）</param>
+    /// <param name="includePrerelease">是否包含测试预发布版本（Beta）</param>
     /// <param name="cancellationToken">取消令牌</param>
     public static async Task<GitHubRelease?> GetLatestReleaseAsync(bool includePrerelease = true, CancellationToken cancellationToken = default)
     {

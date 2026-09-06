@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Drawing.Drawing2D;
 using ZSnaper.Helpers;
 using ZSnaper.Models;
@@ -7,13 +7,13 @@ using ZSnaper.Services;
 namespace ZSnaper.Controls;
 
 /// <summary>
-/// 版本发布通道分段选择器 (Release / Beta / Alpha)
+/// 版本发布通道分段选择器 (Release / Beta)
 /// </summary>
 public class ChannelSegmentedControl : Control
 {
-    private float _sliderIndex = 2f; // 0 = 正式(Release), 1 = 公测(Beta), 2 = 内测(Alpha)
-    private float _startPos = 2f;
-    private float _targetPos = 2f;
+    private float _sliderIndex = 1f; // 0 = 正式版(Release), 1 = 测试版(Beta)
+    private float _startPos = 1f;
+    private float _targetPos = 1f;
     private readonly System.Windows.Forms.Timer _animTimer;
     private readonly Stopwatch _stopwatch = new();
     private int _durationMs = 200;
@@ -25,7 +25,7 @@ public class ChannelSegmentedControl : Control
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true);
         BackColor = Color.Transparent;
         Cursor = Cursors.Hand;
-        Size = new Size(185, 28);
+        Size = new Size(136, 28);
         Font = new Font("Microsoft YaHei UI", 8.2f, FontStyle.Regular);
 
         _sliderIndex = ChannelToIndex(ConfigService.Current.UpdateChannel);
@@ -39,23 +39,21 @@ public class ChannelSegmentedControl : Control
         ConfigService.ConfigChanged += OnConfigChanged;
     }
 
-    private static int ChannelToIndex(string channel)
+    public static int ChannelToIndex(string? channel)
     {
-        return channel.ToLowerInvariant() switch
+        return channel?.ToLowerInvariant() switch
         {
             "release" or "stable" => 0,
-            "beta" => 1,
-            _ => 2 // 默认 Alpha
+            _ => 1 // 默认测试版 (Beta)
         };
     }
 
-    private static string IndexToChannel(int index)
+    public static string IndexToChannel(int index)
     {
         return index switch
         {
             0 => "Release",
-            1 => "Beta",
-            _ => "Alpha"
+            _ => "Beta"
         };
     }
 
@@ -100,8 +98,8 @@ public class ChannelSegmentedControl : Control
         base.OnMouseClick(e);
         if (e.Button == MouseButtons.Left)
         {
-            float segWidth = Width / 3f;
-            int selected = Math.Clamp((int)(e.X / segWidth), 0, 2);
+            float segWidth = Width / 2f;
+            int selected = Math.Clamp((int)(e.X / segWidth), 0, 1);
             string channel = IndexToChannel(selected);
 
             if (!string.Equals(ConfigService.Current.UpdateChannel, channel, StringComparison.OrdinalIgnoreCase))
@@ -132,28 +130,28 @@ public class ChannelSegmentedControl : Control
             g.FillPath(bgBrush, bgPath);
         }
 
-        float segWidth = Width / 3f;
+        float segWidth = Width / 2f;
 
         // 平滑滑动的胶囊滑块
         float startX = 2f;
-        float currentX = startX + _sliderIndex * (segWidth - 1.3f);
+        float currentX = startX + _sliderIndex * (segWidth - 2f);
 
-        var activeRect = new RectangleF(currentX, 2f, segWidth - 3f, Height - 5f);
+        var activeRect = new RectangleF(currentX, 2f, segWidth - 2f, Height - 5f);
         using (var activePath = GraphicsHelper.GetRoundedRectangle(Rectangle.Round(activeRect), (Height - 5) / 2))
         {
             using var activeBrush = new SolidBrush(palette.AccentColor);
             g.FillPath(activeBrush, activePath);
         }
 
-        // 绘制三档标签："Release" / "Beta" / "Alpha"
-        string[] labels = ["正式", "公测", "内测"];
+        // 绘制两档标签："正式版" / "测试版"
+        string[] labels = ["正式版", "测试版"];
         using var sf = new StringFormat
         {
             Alignment = StringAlignment.Center,
             LineAlignment = StringAlignment.Center
         };
 
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < 2; i++)
         {
             var textRect = new RectangleF(i * segWidth, 0, segWidth, Height);
             bool isActive = Math.Abs(_sliderIndex - i) < 0.5f;
