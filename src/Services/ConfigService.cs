@@ -26,6 +26,8 @@ public class AppConfig
     public int TrayIconScalePercent { get; set; } = 128;
     public List<string> TrayIconCustomPalette { get; set; } =
         ["#383C40", "#FFFFFF", "#10B981", "#0EA5E9", "#8B5CF6", "#F97316", "#EF4444", "#F59E0B"];
+    public TrayClickAction TrayLeftClickAction { get; set; } = TrayClickAction.OpenMainWindow;
+    public TrayClickAction TrayMiddleClickAction { get; set; } = TrayClickAction.Capture;
     public bool AutoSavePictures { get; set; } = true;
     public bool AutoCleanOcrParagraphs { get; set; } = true;
     public bool ShowNotification { get; set; } = true;
@@ -49,9 +51,21 @@ public class AppConfig
     public bool AutoStartOnBoot { get; set; } = false;
     public string CaptureHotkey { get; set; } = "Alt+Q";
     public string OcrHotkey { get; set; } = "Alt+X";
+    public string CaptureAndPinHotkey { get; set; } = string.Empty;
+    public string CaptureCurrentScreenHotkey { get; set; } = string.Empty;
+    public string PinClipboardImageHotkey { get; set; } = string.Empty;
+    public string OpenMainWindowHotkey { get; set; } = string.Empty;
+    public string OpenSaveFolderHotkey { get; set; } = string.Empty;
+    public string ToggleThemeHotkey { get; set; } = string.Empty;
     public bool CaptureHotkeyForceBinding { get; set; }
     public bool OcrHotkeyForceBinding { get; set; }
-    public string UpdateChannel { get; set; } = "Alpha";
+    public bool CaptureAndPinHotkeyForceBinding { get; set; }
+    public bool CaptureCurrentScreenHotkeyForceBinding { get; set; }
+    public bool PinClipboardImageHotkeyForceBinding { get; set; }
+    public bool OpenMainWindowHotkeyForceBinding { get; set; }
+    public bool OpenSaveFolderHotkeyForceBinding { get; set; }
+    public bool ToggleThemeHotkeyForceBinding { get; set; }
+    public string UpdateChannel { get; set; } = "Beta";
     public bool AutoCheckUpdates { get; set; } = true;
     public int UpdateCheckIntervalHours { get; set; } = 24;
     public DateTimeOffset? LastUpdateCheckAt { get; set; }

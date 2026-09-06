@@ -3,10 +3,40 @@ namespace ZSnaper.Models;
 public enum HotkeyCommand
 {
     Capture,
-    Ocr
+    Ocr,
+    CaptureAndPin,
+    CaptureCurrentScreen,
+    PinClipboardImage,
+    OpenMainWindow,
+    OpenSaveFolder,
+    ToggleTheme
 }
 
-public readonly record struct HotkeyChangeResult(bool Success, string Message);
+public enum HotkeyBindingMode
+{
+    Standard,
+    Intercept
+}
+
+public enum HotkeyChangeFailure
+{
+    None,
+    Invalid,
+    Duplicate,
+    Occupied,
+    HookUnavailable,
+    Persistence,
+    Registration,
+    Busy
+}
+
+public readonly record struct HotkeyChangeResult(
+    bool Success,
+    string Message,
+    HotkeyChangeFailure Failure = HotkeyChangeFailure.None)
+{
+    public bool CanForce => Failure is HotkeyChangeFailure.Invalid or HotkeyChangeFailure.Occupied;
+}
 
 public readonly record struct HotkeyGesture(Keys KeyCode, Keys Modifiers)
 {
@@ -21,6 +51,8 @@ public readonly record struct HotkeyGesture(Keys KeyCode, Keys Modifiers)
         KeyCode != Keys.None &&
         KeyCode != Keys.Escape &&
         !IsModifierKey(KeyCode);
+
+    public bool IsRecordable => IsValidForForceBinding;
 
     public string DisplayText => string.Join(" + ", GetParts());
 
@@ -65,6 +97,11 @@ public readonly record struct HotkeyGesture(Keys KeyCode, Keys Modifiers)
             }
 
             if (!Enum.TryParse(part, ignoreCase: true, out Keys parsedKey))
+            {
+                return false;
+            }
+
+            if (keyCode != Keys.None)
             {
                 return false;
             }

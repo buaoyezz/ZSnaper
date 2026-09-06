@@ -27,6 +27,9 @@ public enum LucideIcon
     GalleryVerticalEnd,
     ChevronsDown,
     Download,
+    Pin,
+    Monitor,
     Power,
+    Search,
     X
 }

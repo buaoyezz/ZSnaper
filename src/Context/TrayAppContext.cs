@@ -1,5 +1,6 @@
 using ZSnaper.Forms;
 using ZSnaper.Helpers;
+using ZSnaper.Interop;
 using ZSnaper.Models;
 using ZSnaper.Services;
 using ZSnaper.Controls;
@@ -21,9 +22,16 @@ public class TrayAppContext : ApplicationContext
     private readonly ModernTrayMenu _trayMenu;
     private readonly ToolStripMenuItem _captureMenuItem;
     private readonly ToolStripMenuItem _ocrMenuItem;
+    private readonly ToolStripMenuItem _captureAndPinMenuItem;
+    private readonly ToolStripMenuItem _pinClipboardMenuItem;
+    private readonly ToolStripMenuItem _captureScreenMenuItem;
+    private readonly ToolStripMenuItem _openFolderMenuItem;
     private readonly ToolStripMenuItem _themeMenuItem;
+    private readonly System.Windows.Forms.Timer _trayPrimaryClickTimer = new();
+    private readonly List<PinnedImageForm> _pinnedImages = [];
     private ResultForm? _result;
     private bool _ocrMode;
+    private CaptureCompletionAction _defaultCaptureAction = CaptureCompletionAction.Default;
     private int _captureCount;
     private int _ocrCount;
     private readonly CancellationTokenSource _updateCancellation = new();
@@ -47,8 +55,7 @@ public class TrayAppContext : ApplicationContext
         _overlay.Captured += OnCaptured;
 
         _hotkeyService = new HotkeyService();
-        _hotkeyService.CaptureTriggered += () => StartCapture(ocr: false);
-        _hotkeyService.OcrTriggered += () => StartCapture(ocr: true);
+        _hotkeyService.CommandTriggered += ExecuteHotkeyCommand;
 
         _mainForm = new MainForm
         {
@@ -58,11 +65,9 @@ public class TrayAppContext : ApplicationContext
         _mainForm.RequestCapture += StartCapture;
         _mainForm.RequestHotkeyChange += (command, gesture, forceBinding) =>
             _hotkeyService.TryUpdateHotkey(command, gesture, forceBinding);
+        _mainForm.RequestHotkeyClear += _hotkeyService.TryClearHotkey;
         _mainForm.RequestHotkeyRecordingStart += _hotkeyService.BeginRecording;
         _mainForm.RequestHotkeyRecordingStop += _ => _hotkeyService.EndRecording();
-        _hotkeyService.RecordingGestureCaptured += _mainForm.ApplyRecordedHotkey;
-        _hotkeyService.RecordingCancelled += _mainForm.CancelRecordedHotkey;
-        _hotkeyService.RecordingFeedback += _mainForm.ShowHotkeyRecordingFeedback;
         _mainForm.RequestUpdateCheck += () => _ = CheckForUpdatesAsync(manual: true);
         _mainForm.RequestOpenUpdate += OpenUpdatePage;
         _mainForm.Shown += (_, _) => CheckForUpdatesIfDue();
@@ -91,12 +96,33 @@ public class TrayAppContext : ApplicationContext
             "截图",
             LucideIcon.Camera,
             (_, _) => StartCapture(ocr: false),
-            _hotkeyService.CaptureGesture.DisplayText);
+            _hotkeyService.GetGesture(HotkeyCommand.Capture)?.DisplayText ?? string.Empty);
         _ocrMenuItem = _trayMenu.AddAction(
             "截图并 OCR",
             LucideIcon.FileText,
             (_, _) => StartCapture(ocr: true),
-            _hotkeyService.OcrGesture.DisplayText);
+            _hotkeyService.GetGesture(HotkeyCommand.Ocr)?.DisplayText ?? string.Empty);
+        _captureAndPinMenuItem = _trayMenu.AddAction(
+            "截图并贴图",
+            LucideIcon.Pin,
+            (_, _) => StartCaptureAndPin(),
+            _hotkeyService.GetGesture(HotkeyCommand.CaptureAndPin)?.DisplayText ?? string.Empty);
+        _pinClipboardMenuItem = _trayMenu.AddAction(
+            "贴剪贴板图片",
+            LucideIcon.Copy,
+            (_, _) => PinClipboardImage(),
+            _hotkeyService.GetGesture(HotkeyCommand.PinClipboardImage)?.DisplayText ?? string.Empty);
+        _captureScreenMenuItem = _trayMenu.AddAction(
+            "当前屏幕截图",
+            LucideIcon.Monitor,
+            (_, _) => CaptureCurrentScreen(),
+            _hotkeyService.GetGesture(HotkeyCommand.CaptureCurrentScreen)?.DisplayText ?? string.Empty);
+        _trayMenu.AddSectionSeparator();
+        _openFolderMenuItem = _trayMenu.AddAction(
+            "打开截图目录",
+            LucideIcon.Folder,
+            (_, _) => OpenSaveFolder(),
+            _hotkeyService.GetGesture(HotkeyCommand.OpenSaveFolder)?.DisplayText ?? string.Empty);
         _trayMenu.AddAction(
             "检查更新",
             LucideIcon.RotateCcw,
@@ -112,9 +138,20 @@ public class TrayAppContext : ApplicationContext
             LucideIcon.Power,
             (_, _) => ExitApp(),
             kind: TrayMenuItemKind.Destructive);
-        _trayMenu.Opening += (_, _) => ApplyTrayMenuTheme();
+        _trayMenu.Opening += (_, _) =>
+        {
+            ApplyHotkeyMenuShortcuts();
+            ApplyTrayMenuTheme();
+        };
         _tray.ContextMenuStrip = _trayMenu;
-        _tray.DoubleClick += (_, _) => ShowMainForm();
+        _trayPrimaryClickTimer.Interval = Math.Max(100, SystemInformation.DoubleClickTime + 20);
+        _trayPrimaryClickTimer.Tick += (_, _) =>
+        {
+            _trayPrimaryClickTimer.Stop();
+            ExecuteTrayClickAction(ConfigService.Current.TrayLeftClickAction);
+        };
+        _tray.MouseClick += HandleTrayMouseClick;
+        _tray.MouseDoubleClick += HandleTrayMouseDoubleClick;
 
         _hotkeyService.RegisterConfiguredHotkeys(out bool captureOk, out bool ocrOk);
         if (!captureOk)
@@ -122,7 +159,7 @@ public class TrayAppContext : ApplicationContext
             _tray.ShowBalloonTip(
                 2000,
                 "ZSnaper",
-                $"{_hotkeyService.CaptureGesture.DisplayText} 截图快捷键注册失败，{(_hotkeyService.IsCaptureForceBinding ? "强力绑定需要管理员权限" : "可能已被占用")}",
+                $"{_hotkeyService.CaptureGesture.DisplayText} 截图快捷键启用失败，{(_hotkeyService.IsCaptureForceBinding ? "按键拦截未能启动" : "可能已被占用")}",
                 ToolTipIcon.Warning);
         }
         if (!ocrOk)
@@ -130,8 +167,17 @@ public class TrayAppContext : ApplicationContext
             _tray.ShowBalloonTip(
                 2000,
                 "ZSnaper",
-                $"{_hotkeyService.OcrGesture.DisplayText} OCR 快捷键注册失败，{(_hotkeyService.IsOcrForceBinding ? "强力绑定需要管理员权限" : "可能已被占用")}",
+                $"{_hotkeyService.OcrGesture.DisplayText} OCR 快捷键启用失败，{(_hotkeyService.IsOcrForceBinding ? "按键拦截未能启动" : "可能已被占用")}",
                 ToolTipIcon.Warning);
+        }
+
+        HotkeyCommand[] otherFailures = _hotkeyService.GetInactiveConfiguredCommands()
+            .Where(command => command is not HotkeyCommand.Capture and not HotkeyCommand.Ocr)
+            .ToArray();
+        if (otherFailures.Length > 0)
+        {
+            string names = string.Join("、", otherFailures.Select(command => HotkeyCommandCatalog.GetDefinition(command).Name));
+            _tray.ShowBalloonTip(2200, "ZSnaper", $"这些快捷键启用失败：{names}", ToolTipIcon.Warning);
         }
 
         if (!startMinimizedToTray)
@@ -147,6 +193,121 @@ public class TrayAppContext : ApplicationContext
         _mainForm.Show();
         _mainForm.WindowState = FormWindowState.Normal;
         _mainForm.Activate();
+        NativeMethods.SetForegroundWindow(_mainForm.Handle);
+    }
+
+    public void ActivateMainWindow() => ShowMainForm();
+
+    private void ExecuteHotkeyCommand(HotkeyCommand command)
+    {
+        switch (command)
+        {
+            case HotkeyCommand.Capture:
+                StartCapture(ocr: false);
+                break;
+            case HotkeyCommand.Ocr:
+                StartCapture(ocr: true);
+                break;
+            case HotkeyCommand.CaptureAndPin:
+                StartCaptureAndPin();
+                break;
+            case HotkeyCommand.CaptureCurrentScreen:
+                CaptureCurrentScreen();
+                break;
+            case HotkeyCommand.PinClipboardImage:
+                PinClipboardImage();
+                break;
+            case HotkeyCommand.OpenMainWindow:
+                ShowMainForm();
+                break;
+            case HotkeyCommand.OpenSaveFolder:
+                OpenSaveFolder();
+                break;
+            case HotkeyCommand.ToggleTheme:
+                ThemeManager.ToggleTheme();
+                break;
+        }
+    }
+
+    private void HandleTrayMouseClick(object? sender, MouseEventArgs eventArgs)
+    {
+        if (_disposed || _exitRequested) return;
+
+        switch (eventArgs.Button)
+        {
+            case MouseButtons.Left:
+                // Wait until the system double-click window closes so a double-click runs only once.
+                _trayPrimaryClickTimer.Stop();
+                _trayPrimaryClickTimer.Start();
+                break;
+            case MouseButtons.Middle:
+                ExecuteTrayClickAction(ConfigService.Current.TrayMiddleClickAction);
+                break;
+        }
+    }
+
+    private void HandleTrayMouseDoubleClick(object? sender, MouseEventArgs eventArgs)
+    {
+        if (eventArgs.Button != MouseButtons.Left || _disposed || _exitRequested) return;
+
+        _trayPrimaryClickTimer.Stop();
+        ExecuteTrayClickAction(ConfigService.Current.TrayLeftClickAction);
+    }
+
+    private void ExecuteTrayClickAction(TrayClickAction action)
+    {
+        switch (action)
+        {
+            case TrayClickAction.None:
+                return;
+            case TrayClickAction.OpenMainWindow:
+                ShowMainForm();
+                return;
+            case TrayClickAction.Capture:
+                StartCapture(ocr: false);
+                return;
+            case TrayClickAction.CaptureWithOcr:
+                StartCapture(ocr: true);
+                return;
+            case TrayClickAction.CaptureAndPin:
+                StartCaptureAndPin();
+                return;
+            case TrayClickAction.CaptureCurrentScreen:
+                CaptureCurrentScreen();
+                return;
+            case TrayClickAction.PinClipboardImage:
+                PinClipboardImage();
+                return;
+            case TrayClickAction.OpenSaveFolder:
+                OpenSaveFolder();
+                return;
+            case TrayClickAction.ToggleTheme:
+                ThemeManager.ToggleTheme();
+                return;
+        }
+    }
+
+    private void OpenSaveFolder()
+    {
+        try
+        {
+            string directory = ConfigService.GetEffectiveSavePath();
+            Directory.CreateDirectory(directory);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = directory,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception exception)
+        {
+            AppDiagnostics.LogException("TrayAppContext.OpenSaveFolder", exception);
+            _tray.ShowBalloonTip(
+                2500,
+                "ZSnaper",
+                "无法打开截图目录：" + ShortenError(exception.Message),
+                ToolTipIcon.Warning);
+        }
     }
 
     private void OnUpdateConfigChanged()
@@ -157,8 +318,12 @@ public class TrayAppContext : ApplicationContext
 
     private void ApplyHotkeyMenuShortcuts()
     {
-        _captureMenuItem.ShortcutKeyDisplayString = _hotkeyService.CaptureGesture.DisplayText;
-        _ocrMenuItem.ShortcutKeyDisplayString = _hotkeyService.OcrGesture.DisplayText;
+        _captureMenuItem.ShortcutKeyDisplayString = _hotkeyService.GetGesture(HotkeyCommand.Capture)?.DisplayText ?? string.Empty;
+        _ocrMenuItem.ShortcutKeyDisplayString = _hotkeyService.GetGesture(HotkeyCommand.Ocr)?.DisplayText ?? string.Empty;
+        _captureAndPinMenuItem.ShortcutKeyDisplayString = _hotkeyService.GetGesture(HotkeyCommand.CaptureAndPin)?.DisplayText ?? string.Empty;
+        _pinClipboardMenuItem.ShortcutKeyDisplayString = _hotkeyService.GetGesture(HotkeyCommand.PinClipboardImage)?.DisplayText ?? string.Empty;
+        _captureScreenMenuItem.ShortcutKeyDisplayString = _hotkeyService.GetGesture(HotkeyCommand.CaptureCurrentScreen)?.DisplayText ?? string.Empty;
+        _openFolderMenuItem.ShortcutKeyDisplayString = _hotkeyService.GetGesture(HotkeyCommand.OpenSaveFolder)?.DisplayText ?? string.Empty;
         _trayMenu.PerformLayout();
     }
 
@@ -290,7 +455,13 @@ public class TrayAppContext : ApplicationContext
         }
     }
 
-    private void StartCapture(bool ocr)
+    private void StartCapture(bool ocr) =>
+        StartCapture(ocr, CaptureCompletionAction.Default);
+
+    private void StartCaptureAndPin() =>
+        StartCapture(ocr: false, defaultAction: CaptureCompletionAction.Pin);
+
+    private void StartCapture(bool ocr, CaptureCompletionAction defaultAction)
     {
         if (_disposed || _exitRequested || _overlay.IsDisposed) return;
         if (_overlay.Visible)
@@ -300,6 +471,7 @@ public class TrayAppContext : ApplicationContext
         }
 
         _ocrMode = ocr;
+        _defaultCaptureAction = defaultAction;
         try
         {
             _overlay.BeginCapture();
@@ -324,9 +496,13 @@ public class TrayAppContext : ApplicationContext
         {
             using (bitmap)
             {
-                bool performOcr = action == CaptureCompletionAction.Ocr ||
-                                  action == CaptureCompletionAction.Default && _ocrMode;
-                (bool copyImage, bool saveImage) = ResolveCaptureDestinations(action, _ocrMode);
+                CaptureCompletionAction effectiveAction = action == CaptureCompletionAction.Default
+                    ? _defaultCaptureAction
+                    : action;
+                _defaultCaptureAction = CaptureCompletionAction.Default;
+                bool performOcr = effectiveAction == CaptureCompletionAction.Ocr ||
+                                  effectiveAction == CaptureCompletionAction.Default && _ocrMode;
+                (bool copyImage, bool saveImage) = ResolveCaptureDestinations(effectiveAction, _ocrMode);
 
                 bool copied = copyImage && CaptureService.TryCopyToClipboard(bitmap);
                 string? savedFilePath = null;
@@ -338,10 +514,17 @@ public class TrayAppContext : ApplicationContext
 
                 _captureCount++;
 
+                if (effectiveAction == CaptureCompletionAction.Pin)
+                {
+                    ShowPinnedImage(bitmap, screenPoint);
+                    _mainForm.UpdateHomeOverview(_captureCount, _ocrCount, null, wasOcr: false);
+                    return;
+                }
+
                 if (!performOcr)
                 {
                     _mainForm.UpdateHomeOverview(_captureCount, _ocrCount, savedFilePath, wasOcr: false);
-                    ShowCaptureNotification(action, copied, savedFilePath, saveError);
+                    ShowCaptureNotification(effectiveAction, copied, savedFilePath, saveError);
                     return;
                 }
 
@@ -401,6 +584,56 @@ public class TrayAppContext : ApplicationContext
                     ToolTipIcon.Error);
             }
         }
+    }
+
+    private void CaptureCurrentScreen()
+    {
+        if (_disposed || _exitRequested) return;
+
+        Rectangle bounds = Screen.FromPoint(Cursor.Position).Bounds;
+        try
+        {
+            _ocrMode = false;
+            _defaultCaptureAction = CaptureCompletionAction.Default;
+            Bitmap bitmap = CaptureService.CaptureScreen(bounds);
+            OnCaptured(bitmap, bounds.Location, CaptureCompletionAction.Default);
+        }
+        catch (Exception exception)
+        {
+            AppDiagnostics.LogException("TrayAppContext.CaptureCurrentScreen", exception);
+            _tray.ShowBalloonTip(
+                2500,
+                "ZSnaper",
+                "当前屏幕截图失败：" + ShortenError(exception.Message),
+                ToolTipIcon.Warning);
+        }
+    }
+
+    private void PinClipboardImage()
+    {
+        if (_disposed || _exitRequested) return;
+        if (!CaptureService.TryGetImageFromClipboard(out Bitmap? bitmap) || bitmap is null)
+        {
+            _tray.ShowBalloonTip(2200, "ZSnaper", "剪贴板中没有可贴出的图片", ToolTipIcon.Info);
+            return;
+        }
+
+        using (bitmap)
+        {
+            ShowPinnedImage(bitmap, Cursor.Position);
+        }
+    }
+
+    private void ShowPinnedImage(Bitmap bitmap, Point near)
+    {
+        var pinned = new PinnedImageForm(bitmap, near)
+        {
+            Icon = CurrentWindowIcon
+        };
+        _pinnedImages.Add(pinned);
+        pinned.FormClosed += (_, _) => _pinnedImages.Remove(pinned);
+        pinned.Show();
+        pinned.Activate();
     }
 
     private static (bool Copy, bool Save) ResolveCaptureDestinations(
@@ -500,6 +733,10 @@ public class TrayAppContext : ApplicationContext
         {
             _result.Icon = windowIcon;
         }
+        foreach (PinnedImageForm pinned in _pinnedImages.ToArray())
+        {
+            if (!pinned.IsDisposed) pinned.Icon = windowIcon;
+        }
         _tray.Icon = CurrentTrayIcon;
         ApplyTrayMenuTheme();
     }
@@ -519,12 +756,18 @@ public class TrayAppContext : ApplicationContext
             ConfigService.ConfigChanged -= ApplyConfiguredTrayIcon;
             ConfigService.ConfigChanged -= ApplyHotkeyMenuShortcuts;
             _updateCancellation.Cancel();
+            _tray.MouseClick -= HandleTrayMouseClick;
+            _tray.MouseDoubleClick -= HandleTrayMouseDoubleClick;
+            _trayPrimaryClickTimer.Stop();
+            _trayPrimaryClickTimer.Dispose();
             _updateTimer.Stop();
             _updateTimer.Dispose();
             _trayMenu.Dispose();
             _tray.Dispose();
             _overlay.Dispose();
             _result?.Dispose();
+            foreach (PinnedImageForm pinned in _pinnedImages.ToArray()) pinned.Dispose();
+            _pinnedImages.Clear();
             _mainForm.Dispose();
             _hotkeyService.Dispose();
             _updateCancellation.Dispose();

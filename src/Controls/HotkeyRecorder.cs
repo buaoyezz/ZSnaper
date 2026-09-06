@@ -8,12 +8,12 @@ namespace ZSnaper.Controls;
 public sealed class HotkeyRecorder : Control
 {
     private HotkeyGesture _gesture;
+    private bool _hasGesture;
     private bool _isHovered;
     private bool _isRecording;
-    private bool _isForceRecording;
 
-    public Func<HotkeyGesture, bool, HotkeyChangeResult>? TryCommit { get; set; }
-    public Func<bool, HotkeyChangeResult>? BeginRecordingRequest { get; set; }
+    public Func<HotkeyGesture, HotkeyChangeResult>? TryCommit { get; set; }
+    public Func<HotkeyChangeResult>? BeginRecordingRequest { get; set; }
     public Func<HotkeyChangeResult>? EndRecordingRequest { get; set; }
 
     public event Action<HotkeyChangeResult>? Feedback;
@@ -25,11 +25,21 @@ public sealed class HotkeyRecorder : Control
         set
         {
             _gesture = value;
+            _hasGesture = true;
             Invalidate();
         }
     }
 
-    public bool IsForceRecording => _isForceRecording;
+    public bool HasGesture
+    {
+        get => _hasGesture;
+        set
+        {
+            if (_hasGesture == value) return;
+            _hasGesture = value;
+            Invalidate();
+        }
+    }
 
     public bool IsRecording => _isRecording;
 
@@ -55,16 +65,21 @@ public sealed class HotkeyRecorder : Control
     protected override bool IsInputKey(Keys keyData) =>
         _isRecording || base.IsInputKey(keyData);
 
-    protected override void OnClick(EventArgs e)
+    protected override void OnMouseUp(MouseEventArgs e)
     {
-        base.OnClick(e);
+        base.OnMouseUp(e);
+        if (e.Button != MouseButtons.Left)
+        {
+            return;
+        }
+
         if (_isRecording)
         {
             CancelExternalRecording();
             return;
         }
 
-        StartRecording(forceBinding: false);
+        StartRecording();
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
@@ -74,7 +89,7 @@ public sealed class HotkeyRecorder : Control
         {
             if (e.KeyCode is Keys.Enter or Keys.Space)
             {
-                StartRecording(forceBinding: false);
+                StartRecording();
                 e.SuppressKeyPress = true;
             }
             return;
@@ -99,16 +114,12 @@ public sealed class HotkeyRecorder : Control
         }
 
         HotkeyGesture proposed = HotkeyGesture.FromKeyEvent(e);
-        bool gestureIsValid = _isForceRecording
-            ? proposed.IsValidForForceBinding
-            : proposed.IsValid;
-        if (!gestureIsValid)
+        if (!proposed.IsRecordable)
         {
             Feedback?.Invoke(new HotkeyChangeResult(
                 false,
-                _isForceRecording
-                    ? "强力绑定请按一个非修饰键，Esc 用于取消"
-                    : "请按下 PrintScreen，或使用 Ctrl、Alt、Shift 组合键"));
+                "无法识别这个按键，请按一个非修饰键；Esc 取消",
+                HotkeyChangeFailure.Invalid));
             return;
         }
 
@@ -173,8 +184,8 @@ public sealed class HotkeyRecorder : Control
         Color contentColor = _isRecording ? palette.AccentColor : palette.TextPrimary;
         LucideRenderer.Draw(graphics, LucideIcon.Keyboard, 11, 9, 16, contentColor, 1.8f);
         string displayText = _isRecording
-            ? (_isForceRecording ? "请按强力按键…" : "请按按键…")
-            : _gesture.DisplayText;
+            ? "请按新的快捷键…"
+            : _hasGesture ? _gesture.DisplayText : "未设置";
         TextRenderer.DrawText(
             graphics,
             displayText,
@@ -184,24 +195,14 @@ public sealed class HotkeyRecorder : Control
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
     }
 
-    public void StartRecording(bool forceBinding)
+    public void StartRecording()
     {
         if (_isRecording)
         {
-            if (_isForceRecording == forceBinding)
-            {
-                return;
-            }
-
-            HotkeyChangeResult endResult = FinishRecording();
-            if (!endResult.Success)
-            {
-                Feedback?.Invoke(endResult);
-                return;
-            }
+            return;
         }
 
-        HotkeyChangeResult beginResult = BeginRecordingRequest?.Invoke(forceBinding)
+        HotkeyChangeResult beginResult = BeginRecordingRequest?.Invoke()
             ?? new HotkeyChangeResult(true, string.Empty);
         if (!beginResult.Success)
         {
@@ -211,11 +212,10 @@ public sealed class HotkeyRecorder : Control
 
         Focus();
         _isRecording = true;
-        _isForceRecording = forceBinding;
         RecordingStateChanged?.Invoke();
         Feedback?.Invoke(new HotkeyChangeResult(
             true,
-            forceBinding ? "请按下要强力绑定的按键或组合键，Esc 取消" : "请按下新的按键或组合键，Esc 取消"));
+            "现在按下想用的快捷键，Esc 取消"));
         Invalidate();
     }
 
@@ -254,11 +254,12 @@ public sealed class HotkeyRecorder : Control
 
     private void CommitGesture(HotkeyGesture proposed)
     {
-        HotkeyChangeResult result = TryCommit?.Invoke(proposed, _isForceRecording)
+        HotkeyChangeResult result = TryCommit?.Invoke(proposed)
             ?? new HotkeyChangeResult(false, "快捷键服务尚未就绪");
         if (result.Success)
         {
             _gesture = proposed;
+            _hasGesture = true;
         }
 
         HotkeyChangeResult endResult = FinishRecording();
@@ -274,7 +275,6 @@ public sealed class HotkeyRecorder : Control
     private HotkeyChangeResult FinishRecording()
     {
         _isRecording = false;
-        _isForceRecording = false;
         RecordingStateChanged?.Invoke();
         HotkeyChangeResult result = EndRecordingRequest?.Invoke()
             ?? new HotkeyChangeResult(true, string.Empty);

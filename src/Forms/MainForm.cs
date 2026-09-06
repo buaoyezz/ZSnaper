@@ -33,28 +33,18 @@ public class MainForm : Form
     private SettingItemRow _lastUpdateRow = null!;
     private string? _homeLatestFilePath;
     private string? _latestUpdateUrl;
-    private Action<HotkeyCommand, HotkeyGesture>? _recordedHotkeyHandler;
-    private Action? _cancelRecordedHotkeyHandler;
-    private Action<string>? _hotkeyRecordingFeedbackHandler;
     private readonly CancellationTokenSource _welcomeQuoteCancellation = new();
     private string _welcomeQuote = "保持好奇，保持创造。";
     private string? _welcomeQuoteSource = "ZSnaper";
 
     // 事件
     public event Action<bool>? RequestCapture;
-    public event Func<HotkeyCommand, HotkeyGesture, bool, HotkeyChangeResult>? RequestHotkeyChange;
-    public event Func<HotkeyCommand, bool, HotkeyChangeResult>? RequestHotkeyRecordingStart;
+    public event Func<HotkeyCommand, HotkeyGesture, HotkeyBindingMode, HotkeyChangeResult>? RequestHotkeyChange;
+    public event Func<HotkeyCommand, HotkeyChangeResult>? RequestHotkeyClear;
+    public event Func<HotkeyCommand, HotkeyChangeResult>? RequestHotkeyRecordingStart;
     public event Func<HotkeyCommand, HotkeyChangeResult>? RequestHotkeyRecordingStop;
     public event Action? RequestUpdateCheck;
     public event Action<string>? RequestOpenUpdate;
-
-    public void ApplyRecordedHotkey(HotkeyCommand command, HotkeyGesture gesture) =>
-        _recordedHotkeyHandler?.Invoke(command, gesture);
-
-    public void CancelRecordedHotkey() => _cancelRecordedHotkeyHandler?.Invoke();
-
-    public void ShowHotkeyRecordingFeedback(string message) =>
-        _hotkeyRecordingFeedbackHandler?.Invoke(message);
 
     public MainForm()
     {
@@ -222,7 +212,7 @@ public class MainForm : Form
         Invalidate(true);
     }
 
-    private void SwitchTab(int index)
+    public void SwitchTab(int index)
     {
         if (index < 0 || index >= _pages.Length || _pages[index] is null)
         {
@@ -766,323 +756,396 @@ public class MainForm : Form
     // 页面 3：快捷键配置
     private Panel CreateHotkeysPage()
     {
-        var panel = CreateBasePage();
+        Panel panel = CreateBasePage();
         int contentWidth = panel.Width - 16;
-
-        var titleLabel = new Label
+        Label titleLabel = new()
         {
             Text = "快捷键",
             Font = new Font("Microsoft YaHei UI", 15f, FontStyle.Bold),
             AutoSize = true,
-            Location = new Point(0, 4)
+            Location = Point.Empty
         };
-
-        var descriptionLabel = new Label
+        Label descriptionLabel = new()
         {
-            Text = "普通绑定不会抢占其他软件快捷键；按键被占用时点击“强力绑定”。强力绑定会拦截该按键或组合键，需要权限时会弹出 UAC 请求。",
+            Text = "为每个常用动作设置全局快捷键；点击按键框后直接录制，Esc 取消。",
             Font = new Font("Microsoft YaHei UI", 8.5f),
             AutoSize = false,
             AutoEllipsis = true,
-            Location = new Point(1, 39)
+            Location = new Point(1, 35),
+            Size = new Size(contentWidth - 88, 18)
         };
-        descriptionLabel.Size = new Size(contentWidth, 18);
-
-        HotkeyGesture captureGesture = HotkeyGesture.TryParse(
-                ConfigService.Current.CaptureHotkey,
-                out HotkeyGesture parsedCapture,
-                ConfigService.Current.CaptureHotkeyForceBinding)
-            ? parsedCapture
-            : new HotkeyGesture(Keys.Q, Keys.Alt);
-        HotkeyGesture ocrGesture = HotkeyGesture.TryParse(
-                ConfigService.Current.OcrHotkey,
-                out HotkeyGesture parsedOcr,
-                ConfigService.Current.OcrHotkeyForceBinding)
-            ? parsedOcr
-            : new HotkeyGesture(Keys.X, Keys.Alt);
-        Label feedbackLabel = null!;
-        bool feedbackIsError = false;
-
-        var captureCard = CreateHotkeyCard(
-            "截图",
-            "截取选区并按当前设置保存或复制",
-            captureGesture,
-            HotkeyCommand.Capture,
-            ConfigService.Current.CaptureHotkeyForceBinding,
-            68,
-            out HotkeyRecorder captureRecorder,
-            out Label captureName,
-            out Label captureDescription,
-            out ModernButton captureForceButton);
-
-        var ocrCard = CreateHotkeyCard(
-            "读取文字",
-            "截取选区并调用本地 OCR",
-            ocrGesture,
-            HotkeyCommand.Ocr,
-            ConfigService.Current.OcrHotkeyForceBinding,
-            146,
-            out HotkeyRecorder ocrRecorder,
-            out Label ocrName,
-            out Label ocrDescription,
-            out ModernButton ocrForceButton);
-
-        feedbackLabel = new Label
+        Label resultCountLabel = new()
         {
-            Text = "点击右侧快捷键框开始修改",
+            Text = $"{HotkeyCommandCatalog.Definitions.Count} 个命令",
+            Font = new Font("Microsoft YaHei UI", 8.1f),
+            AutoSize = false,
+            TextAlign = ContentAlignment.MiddleRight,
+            Location = new Point(contentWidth - 86, 34),
+            Size = new Size(86, 20),
+            Anchor = AnchorStyles.Top | AnchorStyles.Right
+        };
+        HotkeySearchBox searchBox = new()
+        {
+            Location = new Point(0, 62),
+            Size = new Size(contentWidth, 38),
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+        };
+        Label feedbackLabel = new()
+        {
+            Text = "新增动作默认未绑定，按需设置即可；右键快捷键框可清除",
             Font = new Font("Microsoft YaHei UI", 8.1f),
             AutoSize = false,
             AutoEllipsis = true,
-            Location = new Point(1, 223),
+            Location = new Point(1, 111),
             Size = new Size(contentWidth, 20),
             Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
         };
+        ModernButton confirmBindingButton = new()
+        {
+            Text = "仍然绑定",
+            Icon = LucideIcon.Check,
+            IsPrimary = true,
+            Font = new Font("Microsoft YaHei UI", 8.1f),
+            Size = new Size(104, 28),
+            Location = new Point(contentWidth - 104, 104),
+            Anchor = AnchorStyles.Top | AnchorStyles.Right,
+            Visible = false,
+            AccessibleRole = AccessibleRole.PushButton,
+            AccessibleName = "仍然绑定这个快捷键",
+            AccessibleDescription = "ZSnaper 将优先接收这个按键"
+        };
+        ModernScrollPanel scrollPanel = new()
+        {
+            Location = new Point(0, 139),
+            Size = new Size(panel.Width, panel.Height - 139),
+            Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right
+        };
+
+        int cardWidth = Math.Max(280, scrollPanel.Content.ClientSize.Width - 4);
+        bool feedbackIsError = false;
+        bool feedbackIsWarning = false;
+        HotkeyCommand? pendingCommand = null;
+        HotkeyGesture pendingGesture = default;
+        HotkeyRecorder? pendingRecorder = null;
+        Action? pendingAccepted = null;
+        Action applyFilter = null!;
+        var entries = new List<(HotkeyCommandDefinition Definition, ModernCard Card, Label Name, Label Description, HotkeyRecorder Recorder)>();
+
         void ShowFeedback(HotkeyChangeResult result)
         {
             feedbackLabel.Text = result.Message;
-            feedbackIsError = !result.Success && result.Message != "已取消修改";
+            feedbackIsWarning = !result.Success && result.CanForce;
+            feedbackIsError = !result.Success && result.Message != "已取消修改" && !feedbackIsWarning;
             feedbackLabel.ForeColor = feedbackIsError
                 ? Color.FromArgb(239, 68, 68)
-                : ThemeManager.Palette.TextMuted;
+                : feedbackIsWarning ? Color.FromArgb(245, 158, 11) : ThemeManager.Palette.TextMuted;
         }
 
-        captureRecorder.Feedback += ShowFeedback;
-        ocrRecorder.Feedback += ShowFeedback;
-        _hotkeyRecordingFeedbackHandler = message =>
-            ShowFeedback(new HotkeyChangeResult(false, message));
-
-        _recordedHotkeyHandler = (command, gesture) =>
+        void RefreshPendingBinding()
         {
-            if (command == HotkeyCommand.Capture)
-            {
-                captureRecorder.CommitRecordedGesture(gesture);
-            }
-            else
-            {
-                ocrRecorder.CommitRecordedGesture(gesture);
-            }
-        };
-        _cancelRecordedHotkeyHandler = () =>
+            bool visible = pendingCommand is not null;
+            confirmBindingButton.Visible = visible;
+            feedbackLabel.Width = Math.Max(1, contentWidth - (visible ? 116 : 0));
+            confirmBindingButton.Invalidate();
+        }
+
+        void ClearPendingBinding()
         {
-            captureRecorder.CancelExternalRecording();
-            ocrRecorder.CancelExternalRecording();
+            pendingCommand = null;
+            pendingRecorder = null;
+            pendingAccepted = null;
+            RefreshPendingBinding();
+        }
+
+        void OfferDirectBinding(HotkeyCommand command, HotkeyGesture gesture, HotkeyRecorder recorder, Action accepted)
+        {
+            pendingCommand = command;
+            pendingGesture = gesture;
+            pendingRecorder = recorder;
+            pendingAccepted = accepted;
+            RefreshPendingBinding();
+        }
+
+        confirmBindingButton.Click += (_, _) =>
+        {
+            if (pendingCommand is not HotkeyCommand command || pendingRecorder is null) return;
+            HotkeyChangeResult result = RequestHotkeyChange?.Invoke(command, pendingGesture, HotkeyBindingMode.Intercept)
+                ?? new HotkeyChangeResult(false, "快捷键服务尚未就绪");
+            if (result.Success)
+            {
+                pendingRecorder.Gesture = pendingGesture;
+                pendingAccepted?.Invoke();
+                result = new HotkeyChangeResult(true, $"已绑定 {pendingGesture.DisplayText}");
+                ClearPendingBinding();
+                applyFilter();
+            }
+            ShowFeedback(result);
         };
 
-        var fixedTitle = new Label
+        foreach (HotkeyCommandDefinition definition in HotkeyCommandCatalog.Definitions)
+        {
+            string configured = HotkeyCommandCatalog.GetConfigText(ConfigService.Current, definition.Command);
+            bool forceBinding = HotkeyCommandCatalog.GetForceBinding(ConfigService.Current, definition.Command);
+            bool hasGesture = HotkeyGesture.TryParse(configured, out HotkeyGesture gesture, forceBinding);
+            (ModernCard card, Label name, Label desc, HotkeyRecorder recorder) = CreateCommandCard(
+                definition,
+                gesture,
+                hasGesture,
+                forceBinding);
+            recorder.Feedback += ShowFeedback;
+            entries.Add((definition, card, name, desc, recorder));
+            scrollPanel.Content.Controls.Add(card);
+        }
+
+        Label fixedTitle = new()
         {
             Text = "固定操作",
             Font = new Font("Microsoft YaHei UI", 8.4f, FontStyle.Bold),
-            AutoSize = true,
-            Location = new Point(0, 253)
+            AutoSize = true
         };
-
-        var fixedCard = new ModernCard
+        ModernCard fixedCard = new()
         {
             CornerRadius = 9,
-            Location = new Point(0, 278),
-            Size = new Size(contentWidth, 60),
+            Size = new Size(cardWidth, 60),
             Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
         };
-
-        var escapeKey = new Label
+        Label escapeKey = new()
         {
-            Text = "Esc",
-            Font = new Font("Segoe UI", 8.6f, FontStyle.Bold),
-            AutoSize = true,
-            Location = new Point(14, 10)
+            Text = "Esc", Font = new Font("Segoe UI", 8.6f, FontStyle.Bold), AutoSize = true, Location = new Point(14, 10)
         };
-        var escapeDescription = new Label
+        Label escapeDescription = new()
         {
-            Text = "取消当前选区",
-            Font = new Font("Microsoft YaHei UI", 8.2f),
-            AutoSize = true,
-            Location = new Point(74, 10)
+            Text = "取消截图选区 / 取消快捷键录制", Font = new Font("Microsoft YaHei UI", 8.2f), AutoSize = true, Location = new Point(74, 10)
         };
-        var trayKey = new Label
+        Label trayKey = new()
         {
-            Text = "双击托盘",
-            Font = new Font("Microsoft YaHei UI", 8.2f, FontStyle.Bold),
-            AutoSize = true,
-            Location = new Point(14, 34)
+            Text = "托盘图标", Font = new Font("Microsoft YaHei UI", 8.2f, FontStyle.Bold), AutoSize = true, Location = new Point(14, 34)
         };
-        var trayDescription = new Label
+        Label trayDescription = new()
         {
-            Text = "打开工作台",
-            Font = new Font("Microsoft YaHei UI", 8.2f),
-            AutoSize = true,
-            Location = new Point(94, 34)
+            Text = "单击或双击快速触发（可在偏好设置中自定义）", Font = new Font("Microsoft YaHei UI", 8.2f), AutoSize = true, Location = new Point(94, 34)
         };
         fixedCard.Controls.Add(escapeKey);
         fixedCard.Controls.Add(escapeDescription);
         fixedCard.Controls.Add(trayKey);
         fixedCard.Controls.Add(trayDescription);
 
+        Label emptyLabel = new()
+        {
+            Text = "没有找到匹配的快捷键",
+            Font = new Font("Microsoft YaHei UI", 9f),
+            AutoSize = false,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Size = new Size(cardWidth, 72),
+            Cursor = Cursors.Hand,
+            Visible = false
+        };
+        emptyLabel.Click += (_, _) => searchBox.Clear();
+        scrollPanel.Content.Controls.Add(fixedTitle);
+        scrollPanel.Content.Controls.Add(fixedCard);
+        scrollPanel.Content.Controls.Add(emptyLabel);
+
+        applyFilter = () =>
+        {
+            string query = searchBox.Text;
+            int top = 0;
+            int matchCount = 0;
+            int currentWidth = Math.Max(280, scrollPanel.Content.ClientSize.Width - 4);
+            foreach (var entry in entries)
+            {
+                string shortcut = entry.Recorder.HasGesture
+                    ? $"{entry.Recorder.Gesture.DisplayText} {entry.Recorder.Gesture.ConfigText}"
+                    : "未设置 未绑定 unassigned none";
+                bool visible = HotkeyCommandCatalog.Matches(entry.Definition, query, shortcut);
+                entry.Card.Visible = visible;
+                if (!visible) continue;
+                entry.Card.Location = new Point(0, top);
+                entry.Card.Width = currentWidth;
+                top += entry.Card.Height + 10;
+                matchCount++;
+            }
+
+            bool fixedVisible = string.IsNullOrWhiteSpace(query) ||
+                "固定操作 Esc 取消当前选区 取消快捷键录制 托盘图标 单击 双击 打开工作台".Contains(query.Trim(), StringComparison.OrdinalIgnoreCase);
+            fixedTitle.Visible = fixedVisible;
+            fixedCard.Visible = fixedVisible;
+            if (fixedVisible)
+            {
+                fixedTitle.Location = new Point(0, top + 4);
+                fixedCard.Location = new Point(0, top + 30);
+                fixedCard.Width = currentWidth;
+                top = fixedCard.Bottom + 2;
+            }
+
+            emptyLabel.Visible = matchCount == 0 && !fixedVisible;
+            if (emptyLabel.Visible)
+            {
+                emptyLabel.Text = $"没有找到与 \"{query.Trim()}\" 匹配的快捷键\n点击此处或按 Esc 清空搜索";
+                emptyLabel.Location = new Point(0, 18);
+                emptyLabel.Width = currentWidth;
+                top = emptyLabel.Bottom;
+            }
+            resultCountLabel.Text = string.IsNullOrWhiteSpace(query) ? $"{entries.Count} 个命令" : $"找到 {matchCount} 个";
+            scrollPanel.ContentHeight = top + 14;
+        };
+        searchBox.TextChanged += (_, _) => applyFilter();
+        scrollPanel.Content.Resize += (_, _) =>
+        {
+            int w = Math.Max(280, scrollPanel.Content.ClientSize.Width - 4);
+            foreach (var entry in entries)
+            {
+                entry.Card.Width = w;
+            }
+            fixedCard.Width = w;
+            emptyLabel.Width = w;
+        };
+        applyFilter();
+
         Action applyHotkeyTheme = () =>
         {
             ThemePalette palette = ThemeManager.Palette;
             titleLabel.ForeColor = palette.TextPrimary;
             descriptionLabel.ForeColor = palette.TextMuted;
-            captureName.ForeColor = palette.TextPrimary;
-            captureDescription.ForeColor = palette.TextMuted;
-            ocrName.ForeColor = palette.TextPrimary;
-            ocrDescription.ForeColor = palette.TextMuted;
-            feedbackLabel.ForeColor = feedbackIsError ? Color.FromArgb(239, 68, 68) : palette.TextMuted;
+            resultCountLabel.ForeColor = palette.TextMuted;
+            feedbackLabel.ForeColor = feedbackIsError
+                ? Color.FromArgb(239, 68, 68)
+                : feedbackIsWarning ? Color.FromArgb(245, 158, 11) : palette.TextMuted;
+            foreach (var entry in entries)
+            {
+                entry.Name.ForeColor = palette.TextPrimary;
+                entry.Description.ForeColor = palette.TextMuted;
+                entry.Card.Invalidate();
+                entry.Recorder.Invalidate();
+            }
             fixedTitle.ForeColor = palette.TextSecondary;
             escapeKey.ForeColor = palette.AccentColor;
             trayKey.ForeColor = palette.AccentColor;
             escapeDescription.ForeColor = palette.TextMuted;
             trayDescription.ForeColor = palette.TextMuted;
-            captureCard.Invalidate();
-            ocrCard.Invalidate();
+            emptyLabel.ForeColor = palette.TextMuted;
             fixedCard.Invalidate();
-            captureRecorder.Invalidate();
-            ocrRecorder.Invalidate();
         };
         applyHotkeyTheme();
         ThemeManager.ThemeChanged += applyHotkeyTheme;
         panel.Disposed += (_, _) => ThemeManager.ThemeChanged -= applyHotkeyTheme;
-        panel.Disposed += (_, _) =>
-        {
-            _recordedHotkeyHandler = null;
-            _cancelRecordedHotkeyHandler = null;
-            _hotkeyRecordingFeedbackHandler = null;
-        };
 
         panel.Controls.Add(titleLabel);
         panel.Controls.Add(descriptionLabel);
-        panel.Controls.Add(captureCard);
-        panel.Controls.Add(ocrCard);
+        panel.Controls.Add(resultCountLabel);
+        panel.Controls.Add(searchBox);
         panel.Controls.Add(feedbackLabel);
-        panel.Controls.Add(fixedTitle);
-        panel.Controls.Add(fixedCard);
+        panel.Controls.Add(confirmBindingButton);
+        panel.Controls.Add(scrollPanel);
         return panel;
 
-        ModernCard CreateHotkeyCard(
-            string name,
-            string description,
+        (ModernCard Card, Label Name, Label Description, HotkeyRecorder Recorder) CreateCommandCard(
+            HotkeyCommandDefinition definition,
             HotkeyGesture gesture,
-            HotkeyCommand command,
-            bool forceBinding,
-            int top,
-            out HotkeyRecorder recorder,
-            out Label nameLabel,
-            out Label descLabel,
-            out ModernButton forceButton)
+            bool hasGesture,
+            bool forceBinding)
         {
-            var card = new ModernCard
+            ModernCard card = new()
             {
                 CornerRadius = 10,
-                Location = new Point(0, top),
-                Size = new Size(contentWidth, 68),
+                Size = new Size(cardWidth, 68),
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
-
-            nameLabel = new Label
+            Label nameLabel = new()
             {
-                Text = name,
+                Text = definition.Name,
                 Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
                 AutoSize = true,
                 Location = new Point(14, 13)
             };
-            descLabel = new Label
+            Label descLabel = new()
             {
-                Text = description,
+                Text = definition.Description,
                 Font = new Font("Microsoft YaHei UI", 8f),
                 AutoSize = false,
                 AutoEllipsis = true,
                 Location = new Point(14, 38),
-                Size = new Size(Math.Max(1, contentWidth - 302), 19),
+                Size = new Size(Math.Max(1, cardWidth - 184), 19),
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
-            HotkeyRecorder createdRecorder = new()
+            HotkeyRecorder recorder = new()
             {
                 Gesture = gesture,
-                Location = new Point(contentWidth - 156, 17),
+                HasGesture = hasGesture,
+                Location = new Point(cardWidth - 156, 17),
                 Size = new Size(142, 34),
                 Anchor = AnchorStyles.Top | AnchorStyles.Right
             };
-            recorder = createdRecorder;
-            createdRecorder.BeginRecordingRequest = useForceBinding => RequestHotkeyRecordingStart?.Invoke(command, useForceBinding)
-                ?? new HotkeyChangeResult(false, "快捷键服务尚未就绪");
-            createdRecorder.EndRecordingRequest = () => RequestHotkeyRecordingStop?.Invoke(command)
-                ?? new HotkeyChangeResult(true, string.Empty);
-
-            ModernButton createdForceButton = new()
+            recorder.BeginRecordingRequest = () =>
             {
-                Text = forceBinding ? "解除强力" : "强力绑定",
-                Icon = LucideIcon.ShieldCheck,
-                IsPrimary = false,
-                Font = new Font("Microsoft YaHei UI", 8.1f),
-                Size = new Size(118, 30),
-                Location = new Point(contentWidth - 282, 19),
-                Anchor = AnchorStyles.Top | AnchorStyles.Right,
-                AccessibleRole = AccessibleRole.PushButton,
-                AccessibleName = forceBinding ? "解除强力绑定" : "强力绑定",
-                AccessibleDescription = "强力绑定会拦截已被其他程序占用的按键或组合键，需要权限时会弹出 UAC 请求"
+                HotkeyChangeResult result = RequestHotkeyRecordingStart?.Invoke(definition.Command)
+                    ?? new HotkeyChangeResult(false, "快捷键服务尚未就绪");
+                if (result.Success) ClearPendingBinding();
+                return result;
             };
-            forceButton = createdForceButton;
-            void RefreshForceButton()
+            recorder.EndRecordingRequest = () => RequestHotkeyRecordingStop?.Invoke(definition.Command)
+                ?? new HotkeyChangeResult(true, string.Empty);
+            recorder.TryCommit = proposed =>
             {
-                bool isForceRecording = createdRecorder.IsRecording && createdRecorder.IsForceRecording;
-                createdForceButton.Text = isForceRecording
-                    ? "取消强力录制"
-                    : forceBinding ? "解除强力" : "强力绑定";
-                createdForceButton.AccessibleName = isForceRecording
-                    ? "取消强力录制"
-                    : forceBinding ? "解除强力绑定" : "强力绑定";
-                createdForceButton.Invalidate();
-            }
-            createdRecorder.RecordingStateChanged += RefreshForceButton;
+                if (forceBinding && recorder.HasGesture && proposed == recorder.Gesture)
+                {
+                    ClearPendingBinding();
+                    return new HotkeyChangeResult(true, $"当前快捷键已是 {proposed.DisplayText}");
+                }
 
-            createdRecorder.TryCommit = (proposed, useForceBinding) =>
-            {
-                HotkeyChangeResult result = RequestHotkeyChange?.Invoke(command, proposed, useForceBinding)
+                HotkeyChangeResult result = RequestHotkeyChange?.Invoke(definition.Command, proposed, HotkeyBindingMode.Standard)
                     ?? new HotkeyChangeResult(false, "快捷键服务尚未就绪");
                 if (result.Success)
                 {
-                    forceBinding = useForceBinding;
-                    RefreshForceButton();
+                    forceBinding = false;
+                    ClearPendingBinding();
+                    BeginInvoke(applyFilter);
                 }
-
+                else if (result.CanForce)
+                {
+                    OfferDirectBinding(definition.Command, proposed, recorder, () => forceBinding = true);
+                    string message = result.Failure == HotkeyChangeFailure.Occupied
+                        ? $"{proposed.DisplayText} 正被其他程序使用。仍然绑定后，ZSnaper 会优先接收它。"
+                        : $"{proposed.DisplayText} 是单独按键。仍然绑定后，按下它会直接触发 ZSnaper。";
+                    result = new HotkeyChangeResult(false, message, result.Failure);
+                }
                 return result;
             };
-            createdForceButton.Click += (_, _) =>
+
+            void ClearHotkey()
             {
-                if (createdRecorder.IsRecording)
+                HotkeyChangeResult result = RequestHotkeyClear?.Invoke(definition.Command)
+                    ?? new HotkeyChangeResult(false, "快捷键服务尚未就绪");
+                if (result.Success)
                 {
-                    if (createdRecorder.IsForceRecording)
-                    {
-                        createdRecorder.CancelExternalRecording();
-                    }
-                    else
-                    {
-                        createdRecorder.StartRecording(forceBinding: true);
-                    }
-
-                    return;
+                    recorder.HasGesture = false;
+                    forceBinding = false;
+                    ClearPendingBinding();
+                    ShowFeedback(new HotkeyChangeResult(true, $"已清除【{definition.Name}】快捷键"));
+                    BeginInvoke(applyFilter);
                 }
-
-                if (forceBinding)
+                else
                 {
-                    HotkeyChangeResult result = RequestHotkeyChange?.Invoke(command, createdRecorder.Gesture, false)
-                        ?? new HotkeyChangeResult(false, "快捷键服务尚未就绪");
-                    if (result.Success)
-                    {
-                        forceBinding = false;
-                        RefreshForceButton();
-                    }
-
                     ShowFeedback(result);
-                    return;
                 }
+            }
 
-                createdRecorder.StartRecording(forceBinding: true);
+            ModernTrayMenu recorderMenu = new();
+            recorderMenu.AddAction("修改快捷键", LucideIcon.Keyboard, (_, _) => recorder.StartRecording());
+            var clearItem = recorderMenu.AddAction("清除快捷键", LucideIcon.X, (_, _) => ClearHotkey(), kind: TrayMenuItemKind.Destructive);
+            recorderMenu.Opening += (_, _) =>
+            {
+                clearItem.Visible = recorder.HasGesture;
+                recorderMenu.ApplyTheme();
             };
+            recorder.ContextMenuStrip = recorderMenu;
+
+            ToolTip toolTip = new();
+            toolTip.SetToolTip(recorder, "点击修改快捷键；右键可清除");
 
             card.Controls.Add(nameLabel);
             card.Controls.Add(descLabel);
-            card.Controls.Add(forceButton);
             card.Controls.Add(recorder);
-            return card;
+            return (card, nameLabel, descLabel, recorder);
         }
     }
 
@@ -1115,7 +1178,7 @@ public class MainForm : Form
 
         var subtitleLabel = new Label
         {
-            Text = "按类别管理外观、截图、工具栏与更新",
+            Text = "按类别管理外观、截图、工具栏与系统",
             Font = new Font("Microsoft YaHei UI", 8.4f, FontStyle.Regular),
             ForeColor = ThemeManager.Palette.TextMuted,
             AutoSize = true,
@@ -1516,16 +1579,82 @@ public class MainForm : Form
         workflowCard.Controls.Add(rowSave);
         workflowCard.Controls.Add(rowPath);
 
-        // 更新与系统：与截图行为分开，避免设置页尾部出现过多不同类型的控件。
-        var systemCard = CreateSettingsCard(364);
+        // 系统：托盘交互与更新设置集中管理。
+        var systemCard = CreateSettingsCard(468);
+        var trayActionOptions = new[]
+        {
+            (Action: TrayClickAction.OpenMainWindow, Label: "打开主界面"),
+            (Action: TrayClickAction.Capture, Label: "区域截图"),
+            (Action: TrayClickAction.CaptureAndPin, Label: "截图并贴图"),
+            (Action: TrayClickAction.CaptureWithOcr, Label: "截图并 OCR"),
+            (Action: TrayClickAction.CaptureCurrentScreen, Label: "当前屏幕截图"),
+            (Action: TrayClickAction.PinClipboardImage, Label: "贴剪贴板图片"),
+            (Action: TrayClickAction.OpenSaveFolder, Label: "打开截图目录"),
+            (Action: TrayClickAction.ToggleTheme, Label: "切换深浅主题"),
+            (Action: TrayClickAction.None, Label: "无操作")
+        };
+
+        ModernDropdown CreateTrayActionDropdown(
+            string accessibleName,
+            TrayClickAction currentAction,
+            Action<TrayClickAction> saveAction)
+        {
+            var dropdown = new ModernDropdown
+            {
+                Font = new Font("Microsoft YaHei UI", 8f),
+                Size = new Size(132, 28),
+                AccessibleName = accessibleName,
+                AccessibleDescription = "选择点击托盘图标时执行的操作"
+            };
+            dropdown.SetItems(trayActionOptions.Select(option => option.Label));
+            int selectedIndex = Array.FindIndex(
+                trayActionOptions,
+                option => option.Action == currentAction);
+            dropdown.SelectedIndex = selectedIndex >= 0 ? selectedIndex : 0;
+            dropdown.SelectedIndexChanged += (_, _) =>
+            {
+                int selected = dropdown.SelectedIndex;
+                if (selected < 0 || selected >= trayActionOptions.Length) return;
+                saveAction(trayActionOptions[selected].Action);
+                ConfigService.Save();
+            };
+            return dropdown;
+        }
+
+        var leftClickActionDropdown = CreateTrayActionDropdown(
+            "托盘左键点击行为",
+            ConfigService.Current.TrayLeftClickAction,
+            action => ConfigService.Current.TrayLeftClickAction = action);
+        var rowTrayLeftClick = new SettingItemRow
+        {
+            Title = "托盘左键点击",
+            Description = "单击或双击只执行一次，避免重复触发截图",
+            ShowDivider = true,
+            ActionControl = leftClickActionDropdown
+        };
+        rowTrayLeftClick.SetBounds(0, 0, systemCard.Width, 52);
+
+        var middleClickActionDropdown = CreateTrayActionDropdown(
+            "托盘中键点击行为",
+            ConfigService.Current.TrayMiddleClickAction,
+            action => ConfigService.Current.TrayMiddleClickAction = action);
+        var rowTrayMiddleClick = new SettingItemRow
+        {
+            Title = "托盘中键点击",
+            Description = "按下鼠标滚轮时快速执行指定操作",
+            ShowDivider = true,
+            ActionControl = middleClickActionDropdown
+        };
+        rowTrayMiddleClick.SetBounds(0, 52, systemCard.Width, 52);
+
         var rowChannel = new SettingItemRow
         {
             Title = "更新与发布通道",
-            Description = "正式版 (稳定) / 公测版 / 内测版",
+            Description = "正式版 (稳定推荐) / 测试版 (预览体验)",
             ShowDivider = true,
             ActionControl = new ChannelSegmentedControl()
         };
-        rowChannel.SetBounds(0, 0, systemCard.Width, 52);
+        rowChannel.SetBounds(0, 104, systemCard.Width, 52);
 
         _updateButton = new ModernButton
         {
@@ -1556,7 +1685,7 @@ public class MainForm : Form
             ShowDivider = true,
             ActionControl = _updateButton
         };
-        rowUpdate.SetBounds(0, 52, systemCard.Width, 52);
+        rowUpdate.SetBounds(0, 156, systemCard.Width, 52);
 
         _lastUpdateRow = new SettingItemRow
         {
@@ -1564,7 +1693,7 @@ public class MainForm : Form
             Description = FormatLastUpdateCheck(),
             ShowDivider = true
         };
-        _lastUpdateRow.SetBounds(0, 104, systemCard.Width, 52);
+        _lastUpdateRow.SetBounds(0, 208, systemCard.Width, 52);
 
         var toggleAutoUpdate = new ModernToggleSwitch
         {
@@ -1582,7 +1711,7 @@ public class MainForm : Form
             ShowDivider = true,
             ActionControl = toggleAutoUpdate
         };
-        rowAutoUpdate.SetBounds(0, 156, systemCard.Width, 52);
+        rowAutoUpdate.SetBounds(0, 260, systemCard.Width, 52);
 
         var updateIntervalOptions = new[]
         {
@@ -1618,7 +1747,7 @@ public class MainForm : Form
             ShowDivider = true,
             ActionControl = updateIntervalDropdown
         };
-        rowUpdateInterval.SetBounds(0, 208, systemCard.Width, 52);
+        rowUpdateInterval.SetBounds(0, 312, systemCard.Width, 52);
 
         var toggleAutoStart = new ModernToggleSwitch
         {
@@ -1648,7 +1777,7 @@ public class MainForm : Form
             ShowDivider = true,
             ActionControl = toggleAutoStart
         };
-        rowAutoStart.SetBounds(0, 260, systemCard.Width, 52);
+        rowAutoStart.SetBounds(0, 364, systemCard.Width, 52);
 
         var toggleNotify = new ModernToggleSwitch { Checked = ConfigService.Current.ShowNotification };
         toggleNotify.CheckedChanged += (_, _) => { ConfigService.Current.ShowNotification = toggleNotify.Checked; ConfigService.Save(); };
@@ -1659,12 +1788,14 @@ public class MainForm : Form
             ShowDivider = false,
             ActionControl = toggleNotify
         };
-        rowNotify.SetBounds(0, 312, systemCard.Width, 52);
+        rowNotify.SetBounds(0, 416, systemCard.Width, 52);
 
-        rowChannel.Anchor = rowUpdate.Anchor = _lastUpdateRow.Anchor = rowAutoUpdate.Anchor =
+        rowTrayLeftClick.Anchor = rowTrayMiddleClick.Anchor = rowChannel.Anchor = rowUpdate.Anchor = _lastUpdateRow.Anchor = rowAutoUpdate.Anchor =
             rowUpdateInterval.Anchor = rowNotify.Anchor =
             AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         rowAutoStart.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        systemCard.Controls.Add(rowTrayLeftClick);
+        systemCard.Controls.Add(rowTrayMiddleClick);
         systemCard.Controls.Add(rowChannel);
         systemCard.Controls.Add(rowUpdate);
         systemCard.Controls.Add(_lastUpdateRow);

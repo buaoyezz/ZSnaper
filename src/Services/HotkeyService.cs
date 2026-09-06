@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -11,106 +10,104 @@ namespace ZSnaper.Services;
 
 public class HotkeyService : NativeWindow, IDisposable
 {
+    private sealed class HotkeyState(HotkeyCommand command, int registrationId)
+    {
+        public HotkeyCommand Command { get; } = command;
+        public HotkeyGesture? Gesture { get; set; }
+        public bool Registered { get; set; }
+        public bool ForceBinding { get; set; }
+        public int RegistrationId { get; set; } = registrationId;
+        public long SuppressUntil { get; set; }
+    }
+
+    private readonly record struct HotkeySnapshot(
+        HotkeyGesture? Gesture,
+        bool Registered,
+        bool ForceBinding,
+        int RegistrationId);
+
     public const int HOTKEY_CAPTURE = 1;
     public const int HOTKEY_OCR = 2;
-    private const int WM_APP_RECORD_GESTURE = 0x8001;
-    private const int WM_APP_RECORD_CANCELLED = 0x8002;
     private const int WM_APP_FORCE_TRIGGER = 0x8003;
-    private const int WM_APP_RECORD_FEEDBACK = 0x8004;
 
     public event Action? CaptureTriggered;
     public event Action? OcrTriggered;
-    public event Action<HotkeyCommand, HotkeyGesture>? RecordingGestureCaptured;
-    public event Action? RecordingCancelled;
-    public event Action<string>? RecordingFeedback;
+    public event Action<HotkeyCommand>? CommandTriggered;
 
-    private bool _captureRegistered;
-    private bool _ocrRegistered;
-    private int _captureHotkeyId = HOTKEY_CAPTURE;
-    private int _ocrHotkeyId = HOTKEY_OCR;
-    private HotkeyGesture _captureGesture = new(Keys.Q, Keys.Alt);
-    private HotkeyGesture _ocrGesture = new(Keys.X, Keys.Alt);
-    private bool _captureForceBinding;
-    private bool _ocrForceBinding;
-    private long _captureSuppressUntil;
-    private long _ocrSuppressUntil;
+    private readonly Dictionary<HotkeyCommand, HotkeyState> _states;
     private int _nextRegistrationId = 100;
-
     private SimpleGlobalHook? _keyboardHook;
     private readonly HashSet<KeyCode> _pressedKeys = [];
     private readonly HashSet<KeyCode> _suppressedKeys = [];
-    private readonly ConcurrentQueue<(HotkeyCommand Command, HotkeyGesture Gesture)> _pendingGestures = [];
-    private readonly ConcurrentQueue<string> _pendingRecordingFeedback = [];
     private HotkeyCommand? _recordingCommand;
-    private bool _recordingForceBinding;
-    private bool _captureWasRegisteredBeforeRecording;
-    private bool _ocrWasRegisteredBeforeRecording;
-    private int _captureIdBeforeRecording;
-    private int _ocrIdBeforeRecording;
+    private Dictionary<HotkeyCommand, HotkeySnapshot>? _recordingSnapshots;
 
-    public bool IsCaptureRegistered => _captureRegistered;
-    public bool IsOcrRegistered => _ocrRegistered;
-    public bool IsCaptureForceBinding => _captureForceBinding;
-    public bool IsOcrForceBinding => _ocrForceBinding;
+    public bool IsCaptureRegistered => GetState(HotkeyCommand.Capture).Registered;
+    public bool IsOcrRegistered => GetState(HotkeyCommand.Ocr).Registered;
+    public bool IsCaptureForceBinding => GetState(HotkeyCommand.Capture).ForceBinding;
+    public bool IsOcrForceBinding => GetState(HotkeyCommand.Ocr).ForceBinding;
+    public HotkeyGesture CaptureGesture => GetGesture(HotkeyCommand.Capture) ?? new HotkeyGesture(Keys.Q, Keys.Alt);
+    public HotkeyGesture OcrGesture => GetGesture(HotkeyCommand.Ocr) ?? new HotkeyGesture(Keys.X, Keys.Alt);
 
     public HotkeyService()
     {
+        _states = HotkeyCommandCatalog.Definitions
+            .Select((definition, index) => new HotkeyState(definition.Command, index + 1))
+            .ToDictionary(state => state.Command);
         CreateHandle(new CreateParams());
     }
 
-    public HotkeyGesture CaptureGesture => _captureGesture;
-    public HotkeyGesture OcrGesture => _ocrGesture;
+    public HotkeyGesture? GetGesture(HotkeyCommand command) => GetState(command).Gesture;
+    public bool IsForceBinding(HotkeyCommand command) => GetState(command).ForceBinding;
 
     public void RegisterConfiguredHotkeys(out bool captureOk, out bool ocrOk)
     {
-        _captureForceBinding = ConfigService.Current.CaptureHotkeyForceBinding;
-        _ocrForceBinding = ConfigService.Current.OcrHotkeyForceBinding;
-        _captureGesture = ParseOrDefault(
-            ConfigService.Current.CaptureHotkey,
-            new HotkeyGesture(Keys.Q, Keys.Alt),
-            _captureForceBinding);
-        _ocrGesture = ParseOrDefault(
-            ConfigService.Current.OcrHotkey,
-            new HotkeyGesture(Keys.X, Keys.Alt),
-            _ocrForceBinding);
-
-        if (_ocrGesture == _captureGesture)
+        foreach (HotkeyCommandDefinition definition in HotkeyCommandCatalog.Definitions)
         {
-            _ocrGesture = new HotkeyGesture(Keys.X, Keys.Alt);
-            _ocrForceBinding = false;
+            HotkeyCommand command = definition.Command;
+            HotkeyState state = GetState(command);
+            bool forceBinding = HotkeyCommandCatalog.GetForceBinding(ConfigService.Current, command);
+            string configured = HotkeyCommandCatalog.GetConfigText(ConfigService.Current, command);
+            state.Gesture = HotkeyGesture.TryParse(configured, out HotkeyGesture gesture, forceBinding)
+                ? gesture
+                : null;
+            state.ForceBinding = state.Gesture is not null && forceBinding;
+            state.Registered = false;
+            ActivateConfiguredHotkey(command);
         }
 
-        captureOk = ActivateConfiguredHotkey(HotkeyCommand.Capture);
-        ocrOk = ActivateConfiguredHotkey(HotkeyCommand.Ocr);
+        captureOk = IsActive(HotkeyCommand.Capture);
+        ocrOk = IsActive(HotkeyCommand.Ocr);
     }
+
+    public IReadOnlyList<HotkeyCommand> GetInactiveConfiguredCommands() =>
+        _states.Values
+            .Where(state => state.Gesture is not null && !IsActive(state.Command))
+            .Select(state => state.Command)
+            .ToList();
 
     public HotkeyChangeResult TryUpdateHotkey(
         HotkeyCommand command,
         HotkeyGesture gesture,
-        bool forceBinding = false)
+        HotkeyBindingMode mode = HotkeyBindingMode.Standard)
     {
-        bool gestureIsValid = forceBinding
-            ? gesture.IsValidForForceBinding
-            : gesture.IsValid;
+        HotkeyState state = GetState(command);
+        bool forceBinding = mode == HotkeyBindingMode.Intercept;
+        bool gestureIsValid = forceBinding ? gesture.IsValidForForceBinding : gesture.IsValid;
         if (!gestureIsValid)
         {
             return CreateInvalidGestureResult(gesture, forceBinding);
         }
 
-        HotkeyGesture otherGesture = command == HotkeyCommand.Capture ? _ocrGesture : _captureGesture;
-        if (gesture == otherGesture)
+        if (_states.Values.Any(other => other.Command != command && other.Gesture == gesture))
         {
-            return new HotkeyChangeResult(false, "该组合键已用于另一项功能");
+            return new HotkeyChangeResult(false, "该组合键已用于另一项功能", HotkeyChangeFailure.Duplicate);
         }
 
-        int id = command == HotkeyCommand.Capture ? _captureHotkeyId : _ocrHotkeyId;
-        bool wasRegistered = command == HotkeyCommand.Capture ? _captureRegistered : _ocrRegistered;
-        bool previousForceBinding = command == HotkeyCommand.Capture ? _captureForceBinding : _ocrForceBinding;
-        HotkeyGesture previous = command == HotkeyCommand.Capture ? _captureGesture : _ocrGesture;
-
-        if (gesture == previous && forceBinding == previousForceBinding)
+        HotkeySnapshot previousState = Snapshot(state);
+        if (state.Gesture == gesture && state.ForceBinding == forceBinding)
         {
-            return new HotkeyChangeResult(true, $"已更新为 {gesture.DisplayText}");
+            return new HotkeyChangeResult(true, $"当前快捷键已是 {gesture.DisplayText}");
         }
 
         if (forceBinding)
@@ -119,67 +116,89 @@ public class HotkeyService : NativeWindow, IDisposable
             {
                 return hookError == NativeMethods.ERROR_ACCESS_DENIED
                     ? RequestElevatedRestart(command, gesture)
-                    : new HotkeyChangeResult(false, "强力绑定启动失败，请稍后重试");
+                    : new HotkeyChangeResult(false, "这个按键暂时无法绑定，请稍后重试", HotkeyChangeFailure.HookUnavailable);
             }
 
-            if (wasRegistered && !NativeMethods.UnregisterHotKey(Handle, id))
+            if (state.Registered && !NativeMethods.UnregisterHotKey(Handle, state.RegistrationId))
             {
                 ReleaseKeyboardHookIfUnused();
-                return new HotkeyChangeResult(false, "无法释放原快捷键，旧快捷键仍保持不变");
+                return new HotkeyChangeResult(false, "无法释放原快捷键，旧快捷键仍保持不变", HotkeyChangeFailure.Registration);
             }
 
-            SetHotkeyState(command, gesture, registered: false, forceBinding: true, id: id);
-            ConfigService.Save();
-            return new HotkeyChangeResult(true, $"已启用强力绑定：{gesture.DisplayText}");
+            SetHotkeyState(state, gesture, registered: false, forceBinding: true, state.RegistrationId);
+            if (!ConfigService.Save())
+            {
+                return CreatePersistenceFailure(RollbackHotkey(state, previousState));
+            }
+
+            return new HotkeyChangeResult(true, $"已绑定 {gesture.DisplayText}");
         }
 
-        // 先用临时 ID 预留新组合键。新键注册失败时，旧注册完全不动。
         int candidateId = AllocateRegistrationId();
         if (!Register(candidateId, gesture))
         {
-            return CreateRegistrationFailureResult(Marshal.GetLastPInvokeError());
+            return CreateRegistrationFailureResult(Marshal.GetLastPInvokeError(), gesture);
         }
 
-        if (wasRegistered && !NativeMethods.UnregisterHotKey(Handle, id))
+        if (state.Registered && !NativeMethods.UnregisterHotKey(Handle, state.RegistrationId))
         {
             NativeMethods.UnregisterHotKey(Handle, candidateId);
-            return new HotkeyChangeResult(false, "无法释放原快捷键，旧快捷键仍保持不变");
+            return new HotkeyChangeResult(false, "无法释放原快捷键，旧快捷键仍保持不变", HotkeyChangeFailure.Registration);
         }
 
-        SetHotkeyState(command, gesture, registered: true, forceBinding: false, id: candidateId);
-        ConfigService.Save();
+        SetHotkeyState(state, gesture, registered: true, forceBinding: false, candidateId);
+        if (!ConfigService.Save())
+        {
+            return CreatePersistenceFailure(RollbackHotkey(state, previousState));
+        }
+
         return new HotkeyChangeResult(true, $"已更新为 {gesture.DisplayText}");
     }
 
-    public HotkeyChangeResult BeginRecording(HotkeyCommand command, bool forceBinding)
+    public HotkeyChangeResult TryClearHotkey(HotkeyCommand command)
+    {
+        HotkeyState state = GetState(command);
+        if (state.Gesture is null)
+        {
+            return new HotkeyChangeResult(true, "该功能未设置快捷键");
+        }
+
+        HotkeySnapshot previousState = Snapshot(state);
+        if (state.Registered && !NativeMethods.UnregisterHotKey(Handle, state.RegistrationId))
+        {
+            return new HotkeyChangeResult(false, "无法释放原快捷键，旧快捷键仍保持不变", HotkeyChangeFailure.Registration);
+        }
+
+        state.Gesture = null;
+        state.Registered = false;
+        state.ForceBinding = false;
+        state.SuppressUntil = 0;
+        HotkeyCommandCatalog.SetConfig(ConfigService.Current, state.Command, string.Empty, forceBinding: false);
+        ReleaseKeyboardHookIfUnused();
+
+        if (!ConfigService.Save())
+        {
+            return CreatePersistenceFailure(RollbackHotkey(state, previousState));
+        }
+
+        return new HotkeyChangeResult(true, "已清除快捷键");
+    }
+
+    public HotkeyChangeResult BeginRecording(HotkeyCommand command)
     {
         if (_recordingCommand is not null)
         {
-            return new HotkeyChangeResult(false, "已有另一个快捷键正在录制");
+            return new HotkeyChangeResult(false, "请先完成或取消另一个快捷键的录制", HotkeyChangeFailure.Busy);
         }
 
-        if (!EnsureKeyboardHook(out int hookError))
+        _recordingSnapshots = _states.ToDictionary(pair => pair.Key, pair => Snapshot(pair.Value));
+        if (!SuspendRegisteredHotkeys())
         {
-            return hookError == NativeMethods.ERROR_ACCESS_DENIED
-                ? RequestElevatedRestartForRecording(forceBinding)
-                : new HotkeyChangeResult(false, "快捷键录制启动失败，请稍后重试");
-        }
-
-        _captureWasRegisteredBeforeRecording = _captureRegistered;
-        _ocrWasRegisteredBeforeRecording = _ocrRegistered;
-        _captureIdBeforeRecording = _captureHotkeyId;
-        _ocrIdBeforeRecording = _ocrHotkeyId;
-        _pressedKeys.Clear();
-        _suppressedKeys.Clear();
-
-        if (!forceBinding && !SuspendRegisteredHotkeys())
-        {
-            ReleaseKeyboardHookIfUnused();
-            return new HotkeyChangeResult(false, "无法暂时保护当前快捷键，请稍后重试");
+            _recordingSnapshots = null;
+            return new HotkeyChangeResult(false, "无法暂停当前快捷键，录制没有开始", HotkeyChangeFailure.Registration);
         }
 
         _recordingCommand = command;
-        _recordingForceBinding = forceBinding;
         return new HotkeyChangeResult(true, string.Empty);
     }
 
@@ -191,26 +210,31 @@ public class HotkeyService : NativeWindow, IDisposable
         }
 
         _recordingCommand = null;
-        _recordingForceBinding = false;
         List<string> errors = [];
+        if (_recordingSnapshots is not null)
+        {
+            foreach ((HotkeyCommand command, HotkeySnapshot snapshot) in _recordingSnapshots)
+            {
+                RestoreSuspendedHotkey(GetState(command), snapshot, errors);
+            }
+        }
 
-        RestoreSuspendedHotkey(
-            HotkeyCommand.Capture,
-            _captureWasRegisteredBeforeRecording,
-            _captureIdBeforeRecording,
-            _captureGesture,
-            errors);
-        RestoreSuspendedHotkey(
-            HotkeyCommand.Ocr,
-            _ocrWasRegisteredBeforeRecording,
-            _ocrIdBeforeRecording,
-            _ocrGesture,
-            errors);
-
+        _recordingSnapshots = null;
         ReleaseKeyboardHookIfUnused();
         return errors.Count == 0
             ? new HotkeyChangeResult(true, string.Empty)
-            : new HotkeyChangeResult(false, "新快捷键已保存，但另一个快捷键恢复失败，请重新启动应用");
+            : new HotkeyChangeResult(false, "另一个快捷键恢复失败，请重新启动应用", HotkeyChangeFailure.Registration);
+    }
+
+    private HotkeyState GetState(HotkeyCommand command) =>
+        _states.TryGetValue(command, out HotkeyState? state)
+            ? state
+            : throw new ArgumentOutOfRangeException(nameof(command));
+
+    private bool IsActive(HotkeyCommand command)
+    {
+        HotkeyState state = GetState(command);
+        return state.Gesture is null || state.Registered || (state.ForceBinding && _keyboardHook is { IsRunning: true });
     }
 
     private bool Register(int id, HotkeyGesture gesture) => NativeMethods.RegisterHotKey(
@@ -228,138 +252,106 @@ public class HotkeyService : NativeWindow, IDisposable
         return nativeModifiers;
     }
 
-    private static HotkeyGesture ParseOrDefault(
-        string? value,
-        HotkeyGesture fallback,
-        bool forceBinding) =>
-        HotkeyGesture.TryParse(value, out HotkeyGesture gesture, forceBinding) ? gesture : fallback;
-
     private bool ActivateConfiguredHotkey(HotkeyCommand command)
     {
-        bool forceBinding = command == HotkeyCommand.Capture ? _captureForceBinding : _ocrForceBinding;
-        if (forceBinding)
-        {
-            return EnsureKeyboardHook(out _);
-        }
-
-        int id = command == HotkeyCommand.Capture ? HOTKEY_CAPTURE : HOTKEY_OCR;
-        HotkeyGesture gesture = command == HotkeyCommand.Capture ? _captureGesture : _ocrGesture;
-        bool registered = Register(id, gesture);
-        SetHotkeyState(command, gesture, registered, forceBinding: false, id: id);
-        return registered;
+        HotkeyState state = GetState(command);
+        if (state.Gesture is not HotkeyGesture gesture) return true;
+        if (state.ForceBinding) return EnsureKeyboardHook(out _);
+        state.Registered = Register(state.RegistrationId, gesture);
+        state.SuppressUntil = Environment.TickCount64 + 750;
+        return state.Registered;
     }
 
     private bool SuspendRegisteredHotkeys()
     {
-        if (_captureRegistered && !NativeMethods.UnregisterHotKey(Handle, _captureHotkeyId))
+        List<HotkeyState> suspended = [];
+        foreach (HotkeyState state in _states.Values.Where(candidate => candidate.Registered))
         {
-            return false;
-        }
-
-        if (_captureRegistered)
-        {
-            _captureRegistered = false;
-        }
-
-        if (_ocrRegistered && !NativeMethods.UnregisterHotKey(Handle, _ocrHotkeyId))
-        {
-            if (_captureWasRegisteredBeforeRecording)
+            if (!NativeMethods.UnregisterHotKey(Handle, state.RegistrationId))
             {
-                _captureRegistered = Register(_captureIdBeforeRecording, _captureGesture);
+                foreach (HotkeyState previous in suspended)
+                {
+                    previous.Registered = previous.Gesture is HotkeyGesture gesture && Register(previous.RegistrationId, gesture);
+                }
+                return false;
             }
 
-            return false;
+            state.Registered = false;
+            suspended.Add(state);
         }
-
-        if (_ocrRegistered)
-        {
-            _ocrRegistered = false;
-        }
-
         return true;
     }
 
-    private void RestoreSuspendedHotkey(
-        HotkeyCommand command,
-        bool wasRegistered,
-        int id,
-        HotkeyGesture gesture,
-        List<string> errors)
+    private void RestoreSuspendedHotkey(HotkeyState state, HotkeySnapshot snapshot, List<string> errors)
     {
-        bool forceBinding = command == HotkeyCommand.Capture ? _captureForceBinding : _ocrForceBinding;
-        bool registered = command == HotkeyCommand.Capture ? _captureRegistered : _ocrRegistered;
-        if (!wasRegistered || forceBinding || registered)
-        {
-            return;
-        }
-
-        if (Register(id, gesture))
-        {
-            if (command == HotkeyCommand.Capture)
-            {
-                _captureHotkeyId = id;
-                _captureRegistered = true;
-            }
-            else
-            {
-                _ocrHotkeyId = id;
-                _ocrRegistered = true;
-            }
-        }
-        else
-        {
-            errors.Add(command.ToString());
-        }
+        if (!snapshot.Registered || state.ForceBinding || state.Registered || state.Gesture is not HotkeyGesture gesture) return;
+        state.RegistrationId = snapshot.RegistrationId;
+        state.Registered = Register(state.RegistrationId, gesture);
+        if (!state.Registered) errors.Add(state.Command.ToString());
     }
 
-    private void SetHotkeyState(
-        HotkeyCommand command,
-        HotkeyGesture gesture,
-        bool registered,
-        bool forceBinding,
-        int id)
+    private void SetHotkeyState(HotkeyState state, HotkeyGesture gesture, bool registered, bool forceBinding, int id)
     {
-        if (command == HotkeyCommand.Capture)
-        {
-            _captureGesture = gesture;
-            _captureRegistered = registered;
-            _captureForceBinding = forceBinding;
-            _captureHotkeyId = id;
-            _captureSuppressUntil = Environment.TickCount64 + 750;
-            ConfigService.Current.CaptureHotkey = gesture.ConfigText;
-            ConfigService.Current.CaptureHotkeyForceBinding = forceBinding;
-        }
-        else
-        {
-            _ocrGesture = gesture;
-            _ocrRegistered = registered;
-            _ocrForceBinding = forceBinding;
-            _ocrHotkeyId = id;
-            _ocrSuppressUntil = Environment.TickCount64 + 750;
-            ConfigService.Current.OcrHotkey = gesture.ConfigText;
-            ConfigService.Current.OcrHotkeyForceBinding = forceBinding;
-        }
-
+        state.Gesture = gesture;
+        state.Registered = registered;
+        state.ForceBinding = forceBinding;
+        state.RegistrationId = id;
+        state.SuppressUntil = Environment.TickCount64 + 750;
+        HotkeyCommandCatalog.SetConfig(ConfigService.Current, state.Command, gesture.ConfigText, forceBinding);
         ReleaseKeyboardHookIfUnused();
     }
 
+    private bool RollbackHotkey(HotkeyState state, HotkeySnapshot previous)
+    {
+        if (state.Registered && !NativeMethods.UnregisterHotKey(Handle, state.RegistrationId)) return false;
+        state.Gesture = previous.Gesture;
+        state.Registered = false;
+        state.ForceBinding = previous.ForceBinding;
+        state.RegistrationId = previous.RegistrationId;
+        state.SuppressUntil = Environment.TickCount64 + 750;
+        HotkeyCommandCatalog.SetConfig(
+            ConfigService.Current,
+            state.Command,
+            previous.Gesture?.ConfigText ?? string.Empty,
+            previous.ForceBinding && previous.Gesture is not null);
+
+        if (previous.Gesture is null)
+        {
+            ReleaseKeyboardHookIfUnused();
+            return true;
+        }
+        if (previous.ForceBinding) return EnsureKeyboardHook(out _);
+        if (!previous.Registered)
+        {
+            ReleaseKeyboardHookIfUnused();
+            return true;
+        }
+
+        state.Registered = Register(previous.RegistrationId, previous.Gesture.Value);
+        ReleaseKeyboardHookIfUnused();
+        return state.Registered;
+    }
+
+    private static HotkeySnapshot Snapshot(HotkeyState state) =>
+        new(state.Gesture, state.Registered, state.ForceBinding, state.RegistrationId);
+
     private int AllocateRegistrationId() => _nextRegistrationId++;
 
-    private HotkeyChangeResult CreateRegistrationFailureResult(int errorCode)
+    private static HotkeyChangeResult CreatePersistenceFailure(bool rolledBack) => new(
+        false,
+        rolledBack ? "配置保存失败，已恢复原快捷键；请检查配置文件权限" : "配置保存失败且原快捷键恢复失败，请重新启动应用",
+        HotkeyChangeFailure.Persistence);
+
+    private static HotkeyChangeResult CreateRegistrationFailureResult(int errorCode, HotkeyGesture gesture)
     {
-        string suffix = errorCode == NativeMethods.ERROR_HOTKEY_ALREADY_REGISTERED
-            ? "，该按键或组合键已被其他程序占用；如需继续，请点击“强力绑定”"
-            : $"（错误码 {errorCode}）";
-        return new HotkeyChangeResult(false, "快捷键注册失败" + suffix);
+        if (errorCode == NativeMethods.ERROR_HOTKEY_ALREADY_REGISTERED)
+            return new HotkeyChangeResult(false, $"{gesture.DisplayText} 正被其他程序使用", HotkeyChangeFailure.Occupied);
+        return new HotkeyChangeResult(false, $"快捷键注册失败（错误码 {errorCode}），原快捷键保持不变", HotkeyChangeFailure.Registration);
     }
 
     private void ReleaseKeyboardHookIfUnused()
     {
-        if (_keyboardHook is null || _recordingCommand is not null || _captureForceBinding || _ocrForceBinding)
-        {
-            return;
-        }
-
+        if (_keyboardHook is null || _states.Values.Any(state => state.ForceBinding && state.Gesture is not null)) return;
         DisposeKeyboardHook();
     }
 
@@ -372,29 +364,22 @@ public class HotkeyService : NativeWindow, IDisposable
         }
 
         DisposeKeyboardHook();
-
-        SimpleGlobalHook hook = new(
-            GlobalHookType.Keyboard,
-            runAsyncOnBackgroundThread: true);
+        SimpleGlobalHook hook = new(GlobalHookType.Keyboard, runAsyncOnBackgroundThread: true);
         hook.KeyPressed += OnKeyboardKeyPressed;
         hook.KeyReleased += OnKeyboardKeyReleased;
-
         using ManualResetEventSlim hookStarted = new(false);
         EventHandler<HookEventArgs> onHookEnabled = (_, _) => hookStarted.Set();
         hook.HookEnabled += onHookEnabled;
-
         try
         {
             Task hookTask = hook.RunAsync();
             if (!hookStarted.Wait(TimeSpan.FromSeconds(2)) || hookTask.IsFaulted)
             {
-                Exception failure = hookTask.Exception?.GetBaseException()
-                    ?? new InvalidOperationException("SharpHook 未能启动全局键盘 Hook");
+                Exception failure = hookTask.Exception?.GetBaseException() ?? new InvalidOperationException("SharpHook 未能启动全局键盘 Hook");
                 errorCode = GetKeyboardHookErrorCode(failure);
                 DisposeHook(hook);
                 return false;
             }
-
             _keyboardHook = hook;
             errorCode = 0;
             return true;
@@ -417,56 +402,24 @@ public class HotkeyService : NativeWindow, IDisposable
         _keyboardHook = null;
         _pressedKeys.Clear();
         _suppressedKeys.Clear();
-
-        if (hook is not null)
-        {
-            DisposeHook(hook);
-        }
+        if (hook is not null) DisposeHook(hook);
     }
 
     private static void DisposeHook(SimpleGlobalHook hook)
     {
-        try
-        {
-            if (hook.IsRunning)
-            {
-                hook.Stop();
-            }
-        }
-        catch
-        {
-            // 关闭阶段不应影响应用退出。
-        }
-
-        try
-        {
-            hook.Dispose();
-        }
-        catch
-        {
-            // 关闭阶段不应影响应用退出。
-        }
+        try { if (hook.IsRunning) hook.Stop(); } catch { }
+        try { hook.Dispose(); } catch { }
     }
 
-    private static int GetKeyboardHookErrorCode(Exception exception)
-    {
-        if (exception is UnauthorizedAccessException ||
-            exception is Win32Exception { NativeErrorCode: NativeMethods.ERROR_ACCESS_DENIED } ||
-            exception.Message.Contains("access denied", StringComparison.OrdinalIgnoreCase))
-        {
-            return NativeMethods.ERROR_ACCESS_DENIED;
-        }
-
-        return 0;
-    }
+    private static int GetKeyboardHookErrorCode(Exception exception) =>
+        exception is UnauthorizedAccessException ||
+        exception is Win32Exception { NativeErrorCode: NativeMethods.ERROR_ACCESS_DENIED } ||
+        exception.Message.Contains("access denied", StringComparison.OrdinalIgnoreCase)
+            ? NativeMethods.ERROR_ACCESS_DENIED : 0;
 
     private void OnKeyboardKeyPressed(object? sender, KeyboardHookEventArgs e)
     {
-        if (e.IsEventSimulated || e.Data.KeyCode == KeyCode.VcUndefined)
-        {
-            return;
-        }
-
+        if (e.IsEventSimulated || e.Data.KeyCode == KeyCode.VcUndefined) return;
         KeyCode keyCode = e.Data.KeyCode;
         bool wasSuppressed = _suppressedKeys.Contains(keyCode);
         _pressedKeys.Add(keyCode);
@@ -475,48 +428,9 @@ public class HotkeyService : NativeWindow, IDisposable
             e.SuppressEvent = true;
             return;
         }
-
-        if (_recordingCommand is not null)
-        {
-            _suppressedKeys.Add(keyCode);
-            e.SuppressEvent = true;
-            if (keyCode == KeyCode.VcEscape)
-            {
-                NativeMethods.PostMessage(Handle, WM_APP_RECORD_CANCELLED, 0, 0);
-                return;
-            }
-
-            if (IsModifierKey(keyCode))
-            {
-                return;
-            }
-
-            HotkeyGesture gesture = CreateGestureFromPressedKeys(keyCode);
-            bool gestureIsValid = _recordingForceBinding
-                ? gesture.IsValidForForceBinding
-                : gesture.IsValid;
-            if (gestureIsValid)
-            {
-                _pendingGestures.Enqueue((_recordingCommand.Value, gesture));
-                NativeMethods.PostMessage(Handle, WM_APP_RECORD_GESTURE, 0, 0);
-            }
-            else
-            {
-                HotkeyChangeResult rejection = CreateInvalidGestureResult(gesture, _recordingForceBinding);
-                _pendingRecordingFeedback.Enqueue(rejection.Message);
-                NativeMethods.PostMessage(Handle, WM_APP_RECORD_FEEDBACK, 0, 0);
-            }
-
-            return;
-        }
-
+        if (_recordingCommand is not null) return;
         if (TryGetForceCommand(keyCode, out HotkeyCommand command))
         {
-            // Modifier key-down events have already reached the foreground app by the
-            // time the complete gesture is known. Suppressing their key-up events would
-            // leave Ctrl/Alt/Shift logically stuck and break unrelated keys such as Delete.
-            // Only suppress the trigger key so every propagated key-down keeps its matching
-            // key-up event.
             _suppressedKeys.Add(keyCode);
             e.SuppressEvent = true;
             NativeMethods.PostMessage(Handle, WM_APP_FORCE_TRIGGER, (nint)command, 0);
@@ -525,18 +439,11 @@ public class HotkeyService : NativeWindow, IDisposable
 
     private void OnKeyboardKeyReleased(object? sender, KeyboardHookEventArgs e)
     {
-        if (e.IsEventSimulated || e.Data.KeyCode == KeyCode.VcUndefined)
-        {
-            return;
-        }
-
+        if (e.IsEventSimulated || e.Data.KeyCode == KeyCode.VcUndefined) return;
         KeyCode keyCode = e.Data.KeyCode;
         bool suppress = _suppressedKeys.Remove(keyCode);
         _pressedKeys.Remove(keyCode);
-        if (suppress)
-        {
-            e.SuppressEvent = true;
-        }
+        if (suppress) e.SuppressEvent = true;
     }
 
     private HotkeyGesture CreateGestureFromPressedKeys(KeyCode keyCode)
@@ -551,171 +458,77 @@ public class HotkeyService : NativeWindow, IDisposable
     private bool TryGetForceCommand(KeyCode keyCode, out HotkeyCommand command)
     {
         HotkeyGesture pressed = CreateGestureFromPressedKeys(keyCode);
-        if (_captureForceBinding && pressed == _captureGesture)
-        {
-            command = HotkeyCommand.Capture;
-            return true;
-        }
-
-        if (_ocrForceBinding && pressed == _ocrGesture)
-        {
-            command = HotkeyCommand.Ocr;
-            return true;
-        }
-
-        command = default;
-        return false;
+        HotkeyState? match = _states.Values.FirstOrDefault(state => state.ForceBinding && state.Gesture == pressed);
+        command = match?.Command ?? default;
+        return match is not null;
     }
 
-    private static bool IsModifierKey(KeyCode keyCode) =>
-        HotkeyGesture.IsModifierKey(ToWinFormsKey(keyCode));
-
-    private static bool IsControlKey(KeyCode keyCode) => keyCode is
-        KeyCode.VcLeftControl or KeyCode.VcRightControl;
-
-    private static bool IsAltKey(KeyCode keyCode) => keyCode is
-        KeyCode.VcLeftAlt or KeyCode.VcRightAlt;
-
-    private static bool IsShiftKey(KeyCode keyCode) => keyCode is
-        KeyCode.VcLeftShift or KeyCode.VcRightShift;
+    private static bool IsControlKey(KeyCode keyCode) => keyCode is KeyCode.VcLeftControl or KeyCode.VcRightControl;
+    private static bool IsAltKey(KeyCode keyCode) => keyCode is KeyCode.VcLeftAlt or KeyCode.VcRightAlt;
+    private static bool IsShiftKey(KeyCode keyCode) => keyCode is KeyCode.VcLeftShift or KeyCode.VcRightShift;
 
     private static Keys ToWinFormsKey(KeyCode keyCode)
     {
         int value = (int)keyCode;
-        if (value >= (int)KeyCode.VcF1 && value <= (int)KeyCode.VcF12)
-        {
-            return (Keys)((int)Keys.F1 + (value - (int)KeyCode.VcF1));
-        }
-
-        if (value >= (int)KeyCode.VcF13 && value <= (int)KeyCode.VcF24)
-        {
-            return (Keys)((int)Keys.F13 + (value - (int)KeyCode.VcF13));
-        }
-
-        if (value >= (int)KeyCode.Vc0 && value <= (int)KeyCode.Vc9)
-        {
-            return (Keys)((int)Keys.D0 + (value - (int)KeyCode.Vc0));
-        }
-
-        if (value >= (int)KeyCode.VcA && value <= (int)KeyCode.VcZ)
-        {
-            return (Keys)((int)Keys.A + (value - (int)KeyCode.VcA));
-        }
-
-        if (value >= (int)KeyCode.VcNumPad0 && value <= (int)KeyCode.VcNumPad9)
-        {
-            return (Keys)((int)Keys.NumPad0 + (value - (int)KeyCode.VcNumPad0));
-        }
-
+        if (value >= (int)KeyCode.VcF1 && value <= (int)KeyCode.VcF12) return (Keys)((int)Keys.F1 + value - (int)KeyCode.VcF1);
+        if (value >= (int)KeyCode.VcF13 && value <= (int)KeyCode.VcF24) return (Keys)((int)Keys.F13 + value - (int)KeyCode.VcF13);
+        if (value >= (int)KeyCode.Vc0 && value <= (int)KeyCode.Vc9) return (Keys)((int)Keys.D0 + value - (int)KeyCode.Vc0);
+        if (value >= (int)KeyCode.VcA && value <= (int)KeyCode.VcZ) return (Keys)((int)Keys.A + value - (int)KeyCode.VcA);
+        if (value >= (int)KeyCode.VcNumPad0 && value <= (int)KeyCode.VcNumPad9) return (Keys)((int)Keys.NumPad0 + value - (int)KeyCode.VcNumPad0);
         return keyCode switch
         {
-            KeyCode.VcEscape => Keys.Escape,
-            KeyCode.VcBackQuote => Keys.Oemtilde,
-            KeyCode.VcMinus => Keys.OemMinus,
-            KeyCode.VcEquals => Keys.Oemplus,
-            KeyCode.VcBackspace => Keys.Back,
-            KeyCode.VcTab => Keys.Tab,
-            KeyCode.VcCapsLock => Keys.CapsLock,
-            KeyCode.VcOpenBracket => Keys.OemOpenBrackets,
-            KeyCode.VcCloseBracket => Keys.OemCloseBrackets,
-            KeyCode.VcBackslash => Keys.OemPipe,
-            KeyCode.VcSemicolon => Keys.OemSemicolon,
-            KeyCode.VcQuote => Keys.OemQuotes,
-            KeyCode.VcEnter or KeyCode.VcNumPadEnter => Keys.Enter,
-            KeyCode.VcComma => Keys.Oemcomma,
-            KeyCode.VcPeriod => Keys.OemPeriod,
-            KeyCode.VcSlash => Keys.OemQuestion,
-            KeyCode.VcSpace => Keys.Space,
-            KeyCode.Vc102 => Keys.Oem102,
-            KeyCode.VcPrintScreen => Keys.PrintScreen,
-            KeyCode.VcScrollLock => Keys.Scroll,
-            KeyCode.VcPause => Keys.Pause,
-            KeyCode.VcCancel => Keys.Cancel,
-            KeyCode.VcHelp => Keys.Help,
-            KeyCode.VcInsert => Keys.Insert,
-            KeyCode.VcDelete => Keys.Delete,
-            KeyCode.VcHome => Keys.Home,
-            KeyCode.VcEnd => Keys.End,
-            KeyCode.VcPageUp => Keys.PageUp,
-            KeyCode.VcPageDown => Keys.PageDown,
-            KeyCode.VcUp => Keys.Up,
-            KeyCode.VcLeft => Keys.Left,
-            KeyCode.VcRight => Keys.Right,
-            KeyCode.VcDown => Keys.Down,
-            KeyCode.VcNumLock => Keys.NumLock,
-            KeyCode.VcNumPadClear => Keys.Clear,
-            KeyCode.VcNumPadDivide => Keys.Divide,
-            KeyCode.VcNumPadMultiply => Keys.Multiply,
-            KeyCode.VcNumPadSubtract => Keys.Subtract,
-            KeyCode.VcNumPadEquals => Keys.Oemplus,
-            KeyCode.VcNumPadAdd => Keys.Add,
-            KeyCode.VcNumPadDecimal => Keys.Decimal,
-            KeyCode.VcNumPadSeparator => Keys.Separator,
-            KeyCode.VcLeftShift => Keys.LShiftKey,
-            KeyCode.VcRightShift => Keys.RShiftKey,
-            KeyCode.VcLeftControl => Keys.LControlKey,
-            KeyCode.VcRightControl => Keys.RControlKey,
-            KeyCode.VcLeftAlt => Keys.LMenu,
-            KeyCode.VcRightAlt => Keys.RMenu,
-            KeyCode.VcLeftMeta => Keys.LWin,
-            KeyCode.VcRightMeta => Keys.RWin,
-            KeyCode.VcContextMenu => Keys.Apps,
-            KeyCode.VcVolumeMute => Keys.VolumeMute,
-            KeyCode.VcVolumeDown => Keys.VolumeDown,
-            KeyCode.VcVolumeUp => Keys.VolumeUp,
-            KeyCode.VcMediaPlay => Keys.MediaPlayPause,
-            KeyCode.VcMediaStop => Keys.MediaStop,
-            KeyCode.VcMediaPrevious => Keys.MediaPreviousTrack,
-            KeyCode.VcMediaNext => Keys.MediaNextTrack,
-            KeyCode.VcBrowserSearch => Keys.BrowserSearch,
-            KeyCode.VcBrowserHome => Keys.BrowserHome,
-            KeyCode.VcBrowserBack => Keys.BrowserBack,
-            KeyCode.VcBrowserForward => Keys.BrowserForward,
-            KeyCode.VcBrowserStop => Keys.BrowserStop,
-            KeyCode.VcBrowserRefresh => Keys.BrowserRefresh,
-            KeyCode.VcBrowserFavorites => Keys.BrowserFavorites,
+            KeyCode.VcEscape => Keys.Escape, KeyCode.VcBackQuote => Keys.Oemtilde, KeyCode.VcMinus => Keys.OemMinus,
+            KeyCode.VcEquals => Keys.Oemplus, KeyCode.VcBackspace => Keys.Back, KeyCode.VcTab => Keys.Tab,
+            KeyCode.VcCapsLock => Keys.CapsLock, KeyCode.VcOpenBracket => Keys.OemOpenBrackets,
+            KeyCode.VcCloseBracket => Keys.OemCloseBrackets, KeyCode.VcBackslash => Keys.OemPipe,
+            KeyCode.VcSemicolon => Keys.OemSemicolon, KeyCode.VcQuote => Keys.OemQuotes,
+            KeyCode.VcEnter or KeyCode.VcNumPadEnter => Keys.Enter, KeyCode.VcComma => Keys.Oemcomma,
+            KeyCode.VcPeriod => Keys.OemPeriod, KeyCode.VcSlash => Keys.OemQuestion, KeyCode.VcSpace => Keys.Space,
+            KeyCode.Vc102 => Keys.Oem102, KeyCode.VcPrintScreen => Keys.PrintScreen, KeyCode.VcScrollLock => Keys.Scroll,
+            KeyCode.VcPause => Keys.Pause, KeyCode.VcCancel => Keys.Cancel, KeyCode.VcHelp => Keys.Help,
+            KeyCode.VcInsert => Keys.Insert, KeyCode.VcDelete => Keys.Delete, KeyCode.VcHome => Keys.Home,
+            KeyCode.VcEnd => Keys.End, KeyCode.VcPageUp => Keys.PageUp, KeyCode.VcPageDown => Keys.PageDown,
+            KeyCode.VcUp => Keys.Up, KeyCode.VcLeft => Keys.Left, KeyCode.VcRight => Keys.Right, KeyCode.VcDown => Keys.Down,
+            KeyCode.VcNumLock => Keys.NumLock, KeyCode.VcNumPadClear => Keys.Clear, KeyCode.VcNumPadDivide => Keys.Divide,
+            KeyCode.VcNumPadMultiply => Keys.Multiply, KeyCode.VcNumPadSubtract => Keys.Subtract,
+            KeyCode.VcNumPadEquals => Keys.Oemplus, KeyCode.VcNumPadAdd => Keys.Add,
+            KeyCode.VcNumPadDecimal => Keys.Decimal, KeyCode.VcNumPadSeparator => Keys.Separator,
+            KeyCode.VcLeftShift => Keys.LShiftKey, KeyCode.VcRightShift => Keys.RShiftKey,
+            KeyCode.VcLeftControl => Keys.LControlKey, KeyCode.VcRightControl => Keys.RControlKey,
+            KeyCode.VcLeftAlt => Keys.LMenu, KeyCode.VcRightAlt => Keys.RMenu,
+            KeyCode.VcLeftMeta => Keys.LWin, KeyCode.VcRightMeta => Keys.RWin, KeyCode.VcContextMenu => Keys.Apps,
+            KeyCode.VcVolumeMute => Keys.VolumeMute, KeyCode.VcVolumeDown => Keys.VolumeDown,
+            KeyCode.VcVolumeUp => Keys.VolumeUp, KeyCode.VcMediaPlay => Keys.MediaPlayPause,
+            KeyCode.VcMediaStop => Keys.MediaStop, KeyCode.VcMediaPrevious => Keys.MediaPreviousTrack,
+            KeyCode.VcMediaNext => Keys.MediaNextTrack, KeyCode.VcBrowserSearch => Keys.BrowserSearch,
+            KeyCode.VcBrowserHome => Keys.BrowserHome, KeyCode.VcBrowserBack => Keys.BrowserBack,
+            KeyCode.VcBrowserForward => Keys.BrowserForward, KeyCode.VcBrowserStop => Keys.BrowserStop,
+            KeyCode.VcBrowserRefresh => Keys.BrowserRefresh, KeyCode.VcBrowserFavorites => Keys.BrowserFavorites,
             _ => Keys.None
         };
     }
 
-    private void TriggerForceCommand(HotkeyCommand command)
+    private void TriggerCommand(HotkeyCommand command)
     {
-        if (command == HotkeyCommand.Capture)
-        {
-            if (Environment.TickCount64 >= _captureSuppressUntil)
-            {
-                CaptureTriggered?.Invoke();
-            }
-        }
-        else if (Environment.TickCount64 >= _ocrSuppressUntil)
-        {
-            OcrTriggered?.Invoke();
-        }
+        HotkeyState state = GetState(command);
+        if (Environment.TickCount64 < state.SuppressUntil) return;
+        if (command == HotkeyCommand.Capture) CaptureTriggered?.Invoke();
+        if (command == HotkeyCommand.Ocr) OcrTriggered?.Invoke();
+        CommandTriggered?.Invoke(command);
     }
 
     private HotkeyChangeResult RequestElevatedRestart(HotkeyCommand command, HotkeyGesture gesture)
     {
-        string previousHotkey = command == HotkeyCommand.Capture
-            ? ConfigService.Current.CaptureHotkey
-            : ConfigService.Current.OcrHotkey;
-        bool previousForce = command == HotkeyCommand.Capture
-            ? ConfigService.Current.CaptureHotkeyForceBinding
-            : ConfigService.Current.OcrHotkeyForceBinding;
-
-        if (command == HotkeyCommand.Capture)
-        {
-            ConfigService.Current.CaptureHotkey = gesture.ConfigText;
-            ConfigService.Current.CaptureHotkeyForceBinding = true;
-        }
-        else
-        {
-            ConfigService.Current.OcrHotkey = gesture.ConfigText;
-            ConfigService.Current.OcrHotkeyForceBinding = true;
-        }
-
+        string previousHotkey = HotkeyCommandCatalog.GetConfigText(ConfigService.Current, command);
+        bool previousForce = HotkeyCommandCatalog.GetForceBinding(ConfigService.Current, command);
+        HotkeyCommandCatalog.SetConfig(ConfigService.Current, command, gesture.ConfigText, forceBinding: true);
         try
         {
-            ConfigService.Save();
+            if (!ConfigService.Save())
+            {
+                RestorePendingHotkey(command, previousHotkey, previousForce);
+                return new HotkeyChangeResult(false, "配置保存失败，原快捷键保持不变", HotkeyChangeFailure.Persistence);
+            }
             Process.Start(new ProcessStartInfo
             {
                 FileName = Application.ExecutablePath,
@@ -724,7 +537,7 @@ public class HotkeyService : NativeWindow, IDisposable
                 Verb = "runas"
             });
             Application.ExitThread();
-            return new HotkeyChangeResult(false, "强力绑定需要管理员权限，正在请求 UAC；允许后应用会自动重启");
+            return new HotkeyChangeResult(false, "绑定这个按键需要管理员权限，正在请求 UAC；允许后应用会自动重启");
         }
         catch (Win32Exception exception) when (exception.NativeErrorCode == 1223)
         {
@@ -740,124 +553,43 @@ public class HotkeyService : NativeWindow, IDisposable
 
     private static HotkeyChangeResult CreateInvalidGestureResult(HotkeyGesture gesture, bool forceBinding)
     {
-        if (gesture.KeyCode == Keys.None)
-        {
-            return new HotkeyChangeResult(false, "无法识别这个按键，请换一个按键重试");
-        }
-
+        if (gesture.KeyCode == Keys.None) return new HotkeyChangeResult(false, "无法识别这个按键，请换一个按键重试");
         return new HotkeyChangeResult(
             false,
-            forceBinding
-                ? $"强力绑定不支持 {gesture.DisplayText}；请按一个非修饰键，Esc 取消"
-                : $"普通绑定不能单独使用 {gesture.DisplayText}；请加 Ctrl、Alt 或 Shift，或点击“强力绑定”后再按该键");
-    }
-
-    private HotkeyChangeResult RequestElevatedRestartForRecording(bool forceBinding)
-    {
-        try
-        {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = Application.ExecutablePath,
-                Arguments = $"--elevated-relaunch --wait-for-pid {Environment.ProcessId}",
-                UseShellExecute = true,
-                Verb = "runas"
-            });
-            Application.ExitThread();
-            return new HotkeyChangeResult(
-                false,
-                forceBinding
-                    ? "强力绑定需要管理员权限，正在请求 UAC；允许后请重新点击“强力绑定”"
-                    : "快捷键录制需要管理员权限，正在请求 UAC；允许后请重新点击快捷键框");
-        }
-        catch (Win32Exception exception) when (exception.NativeErrorCode == 1223)
-        {
-            return new HotkeyChangeResult(false, "已取消管理员权限请求，原快捷键保持不变");
-        }
-        catch
-        {
-            return new HotkeyChangeResult(false, "无法请求管理员权限，原快捷键保持不变");
-        }
+            forceBinding ? $"无法绑定 {gesture.DisplayText}；请按一个非修饰键，Esc 取消" : $"{gesture.DisplayText} 是单独按键",
+            HotkeyChangeFailure.Invalid);
     }
 
     private static void RestorePendingHotkey(HotkeyCommand command, string hotkey, bool forceBinding)
     {
-        if (command == HotkeyCommand.Capture)
-        {
-            ConfigService.Current.CaptureHotkey = hotkey;
-            ConfigService.Current.CaptureHotkeyForceBinding = forceBinding;
-        }
-        else
-        {
-            ConfigService.Current.OcrHotkey = hotkey;
-            ConfigService.Current.OcrHotkeyForceBinding = forceBinding;
-        }
-
+        HotkeyCommandCatalog.SetConfig(ConfigService.Current, command, hotkey, forceBinding);
         ConfigService.Save();
     }
 
     protected override void WndProc(ref Message m)
     {
-        if (m.Msg == WM_APP_RECORD_GESTURE)
+        if (m.Msg == WM_APP_FORCE_TRIGGER)
         {
-            if (_pendingGestures.TryDequeue(out (HotkeyCommand Command, HotkeyGesture Gesture) pendingGesture))
-            {
-                RecordingGestureCaptured?.Invoke(pendingGesture.Command, pendingGesture.Gesture);
-            }
-        }
-        else if (m.Msg == WM_APP_RECORD_CANCELLED)
-        {
-            RecordingCancelled?.Invoke();
-        }
-        else if (m.Msg == WM_APP_FORCE_TRIGGER)
-        {
-            TriggerForceCommand((HotkeyCommand)m.WParam.ToInt32());
-        }
-        else if (m.Msg == WM_APP_RECORD_FEEDBACK)
-        {
-            if (_pendingRecordingFeedback.TryDequeue(out string? feedback))
-            {
-                RecordingFeedback?.Invoke(feedback);
-            }
+            HotkeyCommand command = (HotkeyCommand)m.WParam.ToInt32();
+            if (_states.ContainsKey(command)) TriggerCommand(command);
         }
         else if (m.Msg == NativeMethods.WM_HOTKEY)
         {
             int hotkeyId = m.WParam.ToInt32();
-            if (_captureRegistered && hotkeyId == _captureHotkeyId)
-            {
-                if (Environment.TickCount64 >= _captureSuppressUntil)
-                {
-                    CaptureTriggered?.Invoke();
-                }
-            }
-            else if (_ocrRegistered && hotkeyId == _ocrHotkeyId)
-            {
-                if (Environment.TickCount64 >= _ocrSuppressUntil)
-                {
-                    OcrTriggered?.Invoke();
-                }
-            }
+            HotkeyState? state = _states.Values.FirstOrDefault(candidate => candidate.Registered && candidate.RegistrationId == hotkeyId);
+            if (state is not null) TriggerCommand(state.Command);
         }
-
         base.WndProc(ref m);
     }
 
     public void Dispose()
     {
-        if (_captureRegistered)
+        foreach (HotkeyState state in _states.Values.Where(candidate => candidate.Registered))
         {
-            NativeMethods.UnregisterHotKey(Handle, _captureHotkeyId);
-            _captureRegistered = false;
+            NativeMethods.UnregisterHotKey(Handle, state.RegistrationId);
+            state.Registered = false;
         }
-
-        if (_ocrRegistered)
-        {
-            NativeMethods.UnregisterHotKey(Handle, _ocrHotkeyId);
-            _ocrRegistered = false;
-        }
-
         DisposeKeyboardHook();
-
         DestroyHandle();
         GC.SuppressFinalize(this);
     }

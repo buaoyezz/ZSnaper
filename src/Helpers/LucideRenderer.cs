@@ -45,7 +45,10 @@ public static class LucideRenderer
         [LucideIcon.GalleryVerticalEnd] = "gallery-vertical-end.svg",
         [LucideIcon.ChevronsDown] = "chevrons-down.svg",
         [LucideIcon.Download] = "download.svg",
+        [LucideIcon.Pin] = "pin.svg",
+        [LucideIcon.Monitor] = "monitor.svg",
         [LucideIcon.Power] = "power.svg",
+        [LucideIcon.Search] = "search.svg",
         [LucideIcon.X] = "x.svg"
     };
 
