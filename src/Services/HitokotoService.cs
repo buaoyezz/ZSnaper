@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using ZSnaper.Helpers;
 
 namespace ZSnaper.Services;
 
@@ -47,7 +48,7 @@ public static class HitokotoService
             BaseAddress = new Uri("https://v1.hitokoto.cn/"),
             Timeout = TimeSpan.FromSeconds(3)
         };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("ZSnaper/0.0.3");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd($"ZSnaper/{AppVersionInfo.Version}");
         client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
         return client;
     }

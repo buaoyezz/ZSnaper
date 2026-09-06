@@ -1,10 +1,10 @@
 [CmdletBinding()]
 param(
-    [string]$Version = "0.0.3-alpha",
+    [string]$Version = "0.0.4-beta",
     [string]$Configuration = "Release",
     [string]$Runtime = "win-x64",
     [string]$BasePayloadDirectory = "",
-    [string]$BaseVersion = "0.0.2-alpha",
+    [string]$BaseVersion = "0.0.3-alpha",
     [switch]$SkipBuild
 )
 

@@ -321,7 +321,9 @@ internal static class Program
         using var control = new ChannelSegmentedControl();
         Assert(control.Width == 136 && control.Height == 28, "ChannelSegmentedControl size is incorrect.");
 
-        // 4. AppVersionInfo build channel
+        // 4. AppVersionInfo build channel and version
+        Assert(AppVersionInfo.Version == "0.0.4", "AppVersionInfo.Version should be 0.0.4.");
+        Assert(AppVersionInfo.DisplayVersion == "0.0.4-beta", $"AppVersionInfo.DisplayVersion expected 0.0.4-beta, got {AppVersionInfo.DisplayVersion}.");
         Assert(AppVersionInfo.BuildChannel == "Beta", "AppVersionInfo.BuildChannel should be Beta for prerelease build.");
         Assert(AppVersionInfo.WelcomeChannelLabel == "BETA", "AppVersionInfo.WelcomeChannelLabel should be BETA.");
         Assert(!AppVersionInfo.IsReleaseBuild, "Prerelease build was identified as Release.");
