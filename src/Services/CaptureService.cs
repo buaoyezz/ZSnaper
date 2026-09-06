@@ -144,6 +144,24 @@ public static class CaptureService
     }
 
     /// <summary>
+    /// 从剪贴板读取一份与剪贴板生命周期无关的图片副本。
+    /// </summary>
+    public static bool TryGetImageFromClipboard(out Bitmap? bitmap)
+    {
+        Bitmap? result = null;
+        bool succeeded = TryClipboardOperation(() =>
+        {
+            if (!Clipboard.ContainsImage()) return false;
+            using Image? image = Clipboard.GetImage();
+            if (image is null) return false;
+            result = new Bitmap(image);
+            return true;
+        });
+        bitmap = result;
+        return succeeded && bitmap is not null;
+    }
+
+    /// <summary>
     /// 尝试将文本复制到系统剪贴板
     /// </summary>
     public static bool TryCopyTextToClipboard(string text)
@@ -152,14 +170,20 @@ public static class CaptureService
         return TryClipboardOperation(() => Clipboard.SetText(text));
     }
 
-    private static bool TryClipboardOperation(Action operation)
+    private static bool TryClipboardOperation(Action operation) =>
+        TryClipboardOperation(() =>
+        {
+            operation();
+            return true;
+        });
+
+    private static bool TryClipboardOperation(Func<bool> operation)
     {
         for (int attempt = 0; attempt < 3; attempt++)
         {
             try
             {
-                operation();
-                return true;
+                return operation();
             }
             catch (ExternalException) when (attempt < 2)
             {
