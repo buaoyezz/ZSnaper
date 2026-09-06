@@ -6,7 +6,7 @@ namespace ZSnaper.Controls;
 
 public sealed class SettingsTabBar : Control
 {
-    private static readonly string[] TabLabels = ["外观", "截图", "工具栏", "更新"];
+    private static readonly string[] TabLabels = ["外观", "截图", "工具栏", "系统"];
     private int _selectedIndex;
     private int _hoveredIndex = -1;
 

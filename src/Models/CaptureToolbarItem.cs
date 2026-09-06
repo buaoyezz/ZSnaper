@@ -2,20 +2,21 @@ namespace ZSnaper.Models;
 
 public enum CaptureToolbarItem
 {
-    Pen,
-    Arrow,
-    Text,
-    Mosaic,
-    Style,
-    Undo,
-    Cursor,
-    Ocr,
-    Copy,
-    Save,
-    Reset,
-    Cancel,
-    Confirm,
-    ScrollCapture
+    Pen = 0,
+    Arrow = 1,
+    Text = 2,
+    Mosaic = 3,
+    Style = 4,
+    Undo = 5,
+    Cursor = 6,
+    Ocr = 7,
+    Copy = 8,
+    Save = 9,
+    Pin = 10,
+    Reset = 11,
+    Cancel = 12,
+    Confirm = 13,
+    ScrollCapture = 14
 }
 
 public enum AnnotationToolBehavior
@@ -64,6 +65,7 @@ public static class CaptureToolbarDefaults
         CaptureToolbarItem.Ocr,
         CaptureToolbarItem.Copy,
         CaptureToolbarItem.Save,
+        CaptureToolbarItem.Pin,
         CaptureToolbarItem.Reset,
         CaptureToolbarItem.Cancel,
         CaptureToolbarItem.Confirm
@@ -89,6 +91,7 @@ public static class CaptureToolbarDefaults
             CaptureToolbarItem.Undo,
             CaptureToolbarItem.Copy,
             CaptureToolbarItem.Save,
+            CaptureToolbarItem.Pin,
             CaptureToolbarItem.Confirm
         ],
         CaptureToolbarLayout.Recognition =>
@@ -98,6 +101,7 @@ public static class CaptureToolbarDefaults
             CaptureToolbarItem.Ocr,
             CaptureToolbarItem.Copy,
             CaptureToolbarItem.Save,
+            CaptureToolbarItem.Pin,
             CaptureToolbarItem.Reset,
             CaptureToolbarItem.Cancel,
             CaptureToolbarItem.Confirm
@@ -118,6 +122,7 @@ public static class CaptureToolbarDefaults
         CaptureToolbarItem.Ocr => "OCR 识别",
         CaptureToolbarItem.Copy => "复制",
         CaptureToolbarItem.Save => "保存",
+        CaptureToolbarItem.Pin => "贴图",
         CaptureToolbarItem.Reset => "重新选择",
         CaptureToolbarItem.Cancel => "取消",
         CaptureToolbarItem.Confirm => "完成",

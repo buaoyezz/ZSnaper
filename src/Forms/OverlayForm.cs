@@ -62,6 +62,7 @@ public class OverlayForm : Form
     private readonly SkiaRasterLayer _styleBarLayer = new();
     private int _styleBarRenderKey = int.MinValue;
     private bool _resourcesDisposed;
+    private static readonly Font SizeLabelFont = new("Segoe UI", 8.5f, FontStyle.Bold);
 
     public event Action<Bitmap, Point, CaptureCompletionAction>? Captured;
     public event Action<string>? CaptureFailed;
@@ -315,24 +316,35 @@ public class OverlayForm : Form
         if (_dragMode != DragMode.None)
         {
             Point point = ClampToClient(e.Location);
+            Rectangle nextSelection;
             if (_dragMode == DragMode.NewSelection)
             {
-                _selection = FromPoints(_start, point);
-                _hasSelection = _selection.Width >= MinimumSelectionSize &&
-                                _selection.Height >= MinimumSelectionSize;
+                nextSelection = FromPoints(_start, point);
             }
             else if (_dragMode == DragMode.Move)
             {
-                _selection = MoveSelection(point);
+                nextSelection = MoveSelection(point);
             }
             else
             {
-                _selection = ResizeSelection(point);
+                nextSelection = ResizeSelection(point);
             }
 
+            if (nextSelection == _selection)
+            {
+                return;
+            }
+
+            Rectangle oldSelection = _selection;
+            _selection = nextSelection;
+            _hasSelection = _selection.Width >= MinimumSelectionSize &&
+                            _selection.Height >= MinimumSelectionSize;
+
             Cursor = CursorForDragMode(_dragMode);
-            UpdateInlineStyleControls();
-            Invalidate();
+
+            Rectangle dirty = ComputeSelectionDirtyRect(oldSelection, _selection);
+            Invalidate(dirty);
+            Update();
             return;
         }
 
@@ -481,14 +493,47 @@ public class OverlayForm : Form
         graphics.Restore(annotationState);
 
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
         ThemePalette palette = ThemeManager.Palette;
-        Color contrastColor = palette.Mode == ThemeMode.Dark
-            ? Color.FromArgb(150, 0, 0, 0)
-            : Color.FromArgb(145, 255, 255, 255);
-        using var contrastBorder = new Pen(contrastColor, 5f);
-        using var border = new Pen(palette.AccentColor, 3f);
-        graphics.DrawRectangle(contrastBorder, _selection);
-        graphics.DrawRectangle(border, _selection);
+        bool isDark = palette.Mode == ThemeMode.Dark;
+
+        // 1. Outer subtle contrast halo (stays outside the selection to keep interior content 100% clean)
+        Color outerHaloColor = isDark
+            ? Color.FromArgb(75, 0, 0, 0)
+            : Color.FromArgb(60, 0, 0, 0);
+        using (var haloPen = new Pen(outerHaloColor, 1f) { LineJoin = LineJoin.Round })
+        {
+            graphics.DrawRectangle(
+                haloPen,
+                _selection.Left - 1,
+                _selection.Top - 1,
+                _selection.Width + 2,
+                _selection.Height + 2);
+        }
+
+        // 2. Main crisp accent border (2px smooth rounded stroke)
+        using (var borderPen = new Pen(palette.AccentColor, 2f) { LineJoin = LineJoin.Round })
+        {
+            graphics.DrawRectangle(
+                borderPen,
+                _selection.Left,
+                _selection.Top,
+                _selection.Width,
+                _selection.Height);
+        }
+
+        // 3. Inner subtle light reflection for depth (dark mode only, inside selection by 1px)
+        if (isDark && _selection.Width > 8 && _selection.Height > 8)
+        {
+            using var innerPen = new Pen(Color.FromArgb(24, 255, 255, 255), 1f) { LineJoin = LineJoin.Round };
+            graphics.DrawRectangle(
+                innerPen,
+                _selection.Left + 1,
+                _selection.Top + 1,
+                _selection.Width - 2,
+                _selection.Height - 2);
+        }
+
         DrawResizeHandles(graphics);
         DrawSizeLabel(graphics);
 
@@ -533,6 +578,14 @@ public class OverlayForm : Form
         if (_hasSelection && e.Control && e.KeyCode == Keys.S)
         {
             CompleteCapture(CaptureCompletionAction.Save);
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            return;
+        }
+
+        if (_hasSelection && e.Control && e.KeyCode == Keys.P)
+        {
+            CompleteCapture(CaptureCompletionAction.Pin);
             e.Handled = true;
             e.SuppressKeyPress = true;
             return;
@@ -1174,6 +1227,9 @@ public class OverlayForm : Form
             case ToolbarAction.Save:
                 CompleteCapture(CaptureCompletionAction.Save);
                 break;
+            case ToolbarAction.Pin:
+                CompleteCapture(CaptureCompletionAction.Pin);
+                break;
             case ToolbarAction.Reset:
                 ResetSelection();
                 break;
@@ -1398,6 +1454,9 @@ public class OverlayForm : Form
                     break;
                 case CaptureToolbarItem.Save:
                     Add(ToolbarAction.Save, LucideIcon.Folder, "保存到图片目录  (Ctrl+S)");
+                    break;
+                case CaptureToolbarItem.Pin:
+                    Add(ToolbarAction.Pin, LucideIcon.Pin, "贴到桌面并保持置顶  (Ctrl+P)");
                     break;
                 case CaptureToolbarItem.Reset:
                     Add(ToolbarAction.Reset, LucideIcon.RotateCcw, "重新选择  (R)");
@@ -1809,14 +1868,32 @@ public class OverlayForm : Form
 
         graphics.DrawImage(_screen, bounds, bounds, GraphicsUnit.Pixel);
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
         ThemePalette palette = ThemeManager.Palette;
-        Color contrastColor = palette.Mode == ThemeMode.Dark
-            ? Color.FromArgb(145, 0, 0, 0)
-            : Color.FromArgb(135, 255, 255, 255);
-        using var contrastBorder = new Pen(contrastColor, 4f);
-        using var border = new Pen(palette.AccentColor, 2f);
-        graphics.DrawRectangle(contrastBorder, bounds);
-        graphics.DrawRectangle(border, bounds);
+        bool isDark = palette.Mode == ThemeMode.Dark;
+
+        Color outerHaloColor = isDark
+            ? Color.FromArgb(75, 0, 0, 0)
+            : Color.FromArgb(60, 0, 0, 0);
+        using (var haloPen = new Pen(outerHaloColor, 1f) { LineJoin = LineJoin.Round })
+        {
+            graphics.DrawRectangle(
+                haloPen,
+                bounds.Left - 1,
+                bounds.Top - 1,
+                bounds.Width + 2,
+                bounds.Height + 2);
+        }
+
+        using (var borderPen = new Pen(palette.AccentColor, 2f) { LineJoin = LineJoin.Round })
+        {
+            graphics.DrawRectangle(
+                borderPen,
+                bounds.Left,
+                bounds.Top,
+                bounds.Width,
+                bounds.Height);
+        }
 
         string label = $"{target.Label}  ·  {bounds.Width} × {bounds.Height}  ·  单击选择";
         using var font = new Font("Microsoft YaHei UI", 9f, FontStyle.Regular);
@@ -1827,9 +1904,17 @@ public class OverlayForm : Form
             ? Math.Min(ClientSize.Height - size.Height - 10, bounds.Top + 8)
             : bounds.Top - size.Height - 10;
         var labelBounds = new Rectangle(x, Math.Max(4, y), width, size.Height + 6);
-        using var path = RoundedRectangle(labelBounds, 5);
-        using var background = new SolidBrush(WithAlpha(palette.CardBg, 242));
-        using var outline = new Pen(WithAlpha(palette.CardBorder, 190), 1f);
+
+        var shadowBounds = new Rectangle(labelBounds.X, labelBounds.Y + 1, labelBounds.Width, labelBounds.Height);
+        using (var shadowPath = RoundedRectangle(shadowBounds, 6))
+        using (var shadowBrush = new SolidBrush(Color.FromArgb(40, 0, 0, 0)))
+        {
+            graphics.FillPath(shadowBrush, shadowPath);
+        }
+
+        using var path = RoundedRectangle(labelBounds, 6);
+        using var background = new SolidBrush(WithAlpha(palette.CardBg, 246));
+        using var outline = new Pen(WithAlpha(palette.CardBorder, 200), 1f);
         graphics.FillPath(background, path);
         graphics.DrawPath(outline, path);
         TextRenderer.DrawText(
@@ -1855,23 +1940,36 @@ public class OverlayForm : Form
 
     private void DrawResizeHandles(Graphics graphics)
     {
+        if (_selection.Width < 20 || _selection.Height < 20) return;
+
         ThemePalette palette = ThemeManager.Palette;
-        using var halo = new SolidBrush(WithAlpha(palette.CardBg, 245));
-        using var fill = new SolidBrush(palette.AccentColor);
+        bool isDark = palette.Mode == ThemeMode.Dark;
+
+        float diameter = 9f;
+        float radius = diameter / 2f;
+
+        // Accent ring color with high-luminance fallback
+        Color ringColor = (palette.AccentColor.R > 220 && palette.AccentColor.G > 220 && palette.AccentColor.B > 220)
+            ? (isDark ? Color.FromArgb(210, 40, 40, 40) : Color.FromArgb(180, 100, 100, 100))
+            : palette.AccentColor;
+
+        using var shadowBrush = new SolidBrush(Color.FromArgb(45, 0, 0, 0));
+        using var fillBrush = new SolidBrush(Color.White);
+        using var borderPen = new Pen(ringColor, 1.5f);
+
         foreach (Point center in GetHandleCenters())
         {
-            var outer = new Rectangle(
-                center.X - HandleSize / 2 - 1,
-                center.Y - HandleSize / 2 - 1,
-                HandleSize + 2,
-                HandleSize + 2);
-            var inner = new Rectangle(
-                center.X - HandleSize / 2 + 1,
-                center.Y - HandleSize / 2 + 1,
-                HandleSize - 2,
-                HandleSize - 2);
-            graphics.FillEllipse(halo, outer);
-            graphics.FillEllipse(fill, inner);
+            float cx = center.X;
+            float cy = center.Y;
+
+            // 1. Soft drop shadow (1px offset down)
+            graphics.FillEllipse(shadowBrush, cx - radius, cy - radius + 1f, diameter, diameter);
+
+            // 2. Crisp handle body (smooth white center)
+            graphics.FillEllipse(fillBrush, cx - radius, cy - radius, diameter, diameter);
+
+            // 3. Accent ring border
+            graphics.DrawEllipse(borderPen, cx - radius, cy - radius, diameter, diameter);
         }
     }
 
@@ -1896,28 +1994,80 @@ public class OverlayForm : Form
     {
         ThemePalette palette = ThemeManager.Palette;
         string label = $"{_selection.Width} × {_selection.Height}";
-        using var font = new Font("Segoe UI Variable Text", 9f, FontStyle.Regular);
-        Size size = TextRenderer.MeasureText(graphics, label, font, Size.Empty, TextFormatFlags.NoPadding);
-        int y = _selection.Top - size.Height - 10 < 4
-            ? _selection.Top + 8
-            : _selection.Top - size.Height - 10;
-        var bounds = new Rectangle(_selection.Left, y, size.Width + 14, size.Height + 6);
+        Size size = TextRenderer.MeasureText(graphics, label, SizeLabelFont, Size.Empty, TextFormatFlags.NoPadding);
+        int labelWidth = size.Width + 16;
+        int labelHeight = size.Height + 6;
 
-        using var path = RoundedRectangle(bounds, 5);
-        using var background = new SolidBrush(WithAlpha(palette.CardBg, 242));
-        using var outline = new Pen(WithAlpha(palette.CardBorder, 190), 1f);
+        int x = Math.Clamp(_selection.Left, 4, Math.Max(4, ClientSize.Width - labelWidth - 4));
+        int y = _selection.Top - labelHeight - 8 < 4
+            ? _selection.Top + 8
+            : _selection.Top - labelHeight - 8;
+        var bounds = new Rectangle(x, y, labelWidth, labelHeight);
+
+        // Soft subtle drop shadow
+        var shadowBounds = new Rectangle(bounds.X, bounds.Y + 1, bounds.Width, bounds.Height);
+        using (var shadowPath = RoundedRectangle(shadowBounds, 6))
+        using (var shadowBrush = new SolidBrush(Color.FromArgb(40, 0, 0, 0)))
+        {
+            graphics.FillPath(shadowBrush, shadowPath);
+        }
+
+        using var path = RoundedRectangle(bounds, 6);
+        using var background = new SolidBrush(WithAlpha(palette.CardBg, 246));
+        using var outline = new Pen(WithAlpha(palette.CardBorder, 200), 1f);
         graphics.FillPath(background, path);
         graphics.DrawPath(outline, path);
+
         TextRenderer.DrawText(
             graphics,
             label,
-            font,
+            SizeLabelFont,
             bounds,
             palette.TextPrimary,
             TextFormatFlags.HorizontalCenter |
             TextFormatFlags.VerticalCenter |
             TextFormatFlags.SingleLine |
             TextFormatFlags.NoPadding);
+    }
+
+    private Rectangle ComputeSelectionDirtyRect(Rectangle oldSel, Rectangle newSel)
+    {
+        Rectangle union;
+        if (oldSel.IsEmpty || oldSel.Width <= 0 || oldSel.Height <= 0)
+        {
+            union = newSel;
+        }
+        else if (newSel.IsEmpty || newSel.Width <= 0 || newSel.Height <= 0)
+        {
+            union = oldSel;
+        }
+        else
+        {
+            union = Rectangle.Union(oldSel, newSel);
+        }
+
+        int margin = HandleSize + 18;
+        union.Inflate(margin, margin);
+
+        Rectangle oldLabel = GetSizeLabelDirtyBounds(oldSel);
+        Rectangle newLabel = GetSizeLabelDirtyBounds(newSel);
+        if (!oldLabel.IsEmpty) union = Rectangle.Union(union, oldLabel);
+        if (!newLabel.IsEmpty) union = Rectangle.Union(union, newLabel);
+
+        return Rectangle.Intersect(union, ClientRectangle);
+    }
+
+    private Rectangle GetSizeLabelDirtyBounds(Rectangle sel)
+    {
+        if (sel.IsEmpty || sel.Width <= 0 || sel.Height <= 0) return Rectangle.Empty;
+        int width = 120;
+        int height = 30;
+        int y = sel.Top - height - 8 < 4
+            ? sel.Top + 8
+            : sel.Top - height - 8;
+        int x = Math.Clamp(sel.Left, 4, Math.Max(4, ClientSize.Width - width - 4));
+        var bounds = new Rectangle(x - 4, y - 4, width + 8, height + 8);
+        return Rectangle.Intersect(bounds, ClientRectangle);
     }
 
     private void DrawToolbar(Graphics graphics)
@@ -2919,6 +3069,7 @@ public class OverlayForm : Form
         Ocr,
         Copy,
         Save,
+        Pin,
         Reset,
         Cancel,
         Confirm

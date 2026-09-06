@@ -1,5 +1,8 @@
 using System.Text.Json;
+using System.Diagnostics;
 using ZSnaper.Controls;
+using ZSnaper.Forms;
+using ZSnaper.Helpers;
 using ZSnaper.Models;
 using ZSnaper.Services;
 
@@ -11,10 +14,18 @@ internal static class Program
     private static int Main()
     {
         TestConfigurationNormalization();
+        TestUpdateChannelAndControl();
+        TestToolbarItemOrderAndRepair();
         TestForceHotkeyValidation();
-        TestHotkeyRecordingModeSwitch();
+        TestExpandedHotkeyCatalog();
+        TestHotkeyClearingAndRestoration();
+        TestHotkeySearchBox();
+        TestHotkeyPageUi();
+        TestHotkeyRecordingLifecycle();
+        TestSingleInstanceActivation();
         TestAtomicConfigurationRecovery();
         TestCaptureResourceGuards();
+        TestPinnedImageRendering();
         Console.WriteLine("Application stability tests passed.");
         return 0;
     }
@@ -34,6 +45,9 @@ internal static class Program
         Assert(
             !new HotkeyGesture(Keys.Escape, Keys.None).IsValidForForceBinding,
             "Escape must remain reserved for cancelling recording.");
+        Assert(
+            !HotkeyGesture.TryParse("Q+X", out _, forceBinding: true),
+            "A hotkey with multiple trigger keys was accepted.");
 
         var config = new AppConfig
         {
@@ -47,12 +61,151 @@ internal static class Program
             "Configuration normalization discarded a force-bound standalone Delete key.");
     }
 
-    private static void TestHotkeyRecordingModeSwitch()
+    private static void TestExpandedHotkeyCatalog()
+    {
+        Assert(HotkeyCommandCatalog.Definitions.Count == 8, "The configurable hotkey command list is incomplete.");
+        Assert(
+            HotkeyCommandCatalog.Matches(
+                HotkeyCommandCatalog.GetDefinition(HotkeyCommand.CaptureAndPin),
+                "贴图"),
+            "Hotkey search did not match a command keyword.");
+        Assert(
+            HotkeyCommandCatalog.Matches(
+                HotkeyCommandCatalog.GetDefinition(HotkeyCommand.OpenMainWindow),
+                "Ctrl + Alt + Z",
+                "Ctrl + Alt + Z"),
+            "Hotkey search did not match the configured gesture text.");
+
+        Assert(
+            HotkeyCommandCatalog.Matches(
+                HotkeyCommandCatalog.GetDefinition(HotkeyCommand.CaptureAndPin),
+                "截图 贴图"),
+            "Hotkey search did not match multi-token query.");
+        Assert(
+            HotkeyCommandCatalog.Matches(
+                HotkeyCommandCatalog.GetDefinition(HotkeyCommand.ToggleTheme),
+                "未设置",
+                "未设置 未绑定 unassigned none"),
+            "Hotkey search did not match unassigned shortcut text.");
+
+        var config = new AppConfig
+        {
+            CaptureHotkey = "Alt+Q",
+            OcrHotkey = "Alt+X",
+            CaptureAndPinHotkey = "Ctrl+Alt+P",
+            CaptureCurrentScreenHotkey = "Alt+Q",
+            PinClipboardImageHotkey = "not-a-key",
+            OpenMainWindowHotkey = string.Empty,
+            OpenMainWindowHotkeyForceBinding = true
+        };
+        AppConfigSanitizer.Normalize(config);
+        Assert(config.CaptureAndPinHotkey == "Ctrl+Alt+P", "A valid expanded hotkey was discarded.");
+        Assert(config.CaptureCurrentScreenHotkey.Length == 0, "A duplicate expanded hotkey was retained.");
+        Assert(config.PinClipboardImageHotkey.Length == 0, "An invalid expanded hotkey was retained.");
+        Assert(
+            config.OpenMainWindowHotkey.Length == 0 && !config.OpenMainWindowHotkeyForceBinding,
+            "An unassigned expanded hotkey retained force-binding state.");
+    }
+
+    private static void TestHotkeyClearingAndRestoration()
+    {
+        using var service = new HotkeyService();
+        service.RegisterConfiguredHotkeys(out _, out _);
+        var gesture = new HotkeyGesture(Keys.F11, Keys.Control | Keys.Alt);
+        var updateResult = service.TryUpdateHotkey(HotkeyCommand.ToggleTheme, gesture);
+        Assert(updateResult.Success, "Failed to assign hotkey for ToggleTheme in test: " + updateResult.Message);
+        Assert(service.GetGesture(HotkeyCommand.ToggleTheme) == gesture, "Gesture was not set.");
+
+        var clearResult = service.TryClearHotkey(HotkeyCommand.ToggleTheme);
+        Assert(clearResult.Success, "Failed to clear hotkey: " + clearResult.Message);
+        Assert(service.GetGesture(HotkeyCommand.ToggleTheme) is null, "Gesture was not cleared.");
+        Assert(string.IsNullOrEmpty(ConfigService.Current.ToggleThemeHotkey), "Config was not cleared.");
+    }
+
+    private static void TestHotkeySearchBox()
+    {
+        using var searchBox = new HotkeySearchBox();
+        searchBox.Text = "贴图";
+        Assert(searchBox.Text == "贴图", "SearchBox text was not assigned.");
+        searchBox.Clear();
+        Assert(searchBox.Text.Length == 0, "SearchBox text was not cleared.");
+    }
+
+    private static void TestHotkeyPageUi()
+    {
+        using var form = new MainForm();
+        form.Show();
+        form.SwitchTab(2);
+        Application.DoEvents();
+
+        HotkeySearchBox? searchBox = null;
+        ModernScrollPanel? scrollPanel = null;
+
+        void FindControls(Control parent)
+        {
+            foreach (Control child in parent.Controls)
+            {
+                if (child is HotkeySearchBox sb) searchBox = sb;
+                if (child is ModernScrollPanel sp && child.Parent is not ModernScrollPanel) scrollPanel = sp;
+                FindControls(child);
+            }
+        }
+
+        FindControls(form);
+        Assert(searchBox is not null, "HotkeySearchBox was not found in MainForm.");
+        scrollPanel = searchBox!.Parent?.Controls.OfType<ModernScrollPanel>().FirstOrDefault();
+        Assert(scrollPanel is not null, "ModernScrollPanel was not found on Hotkeys page.");
+
+        // Check initial state: 8 command cards + 1 fixedCard = 9 cards
+        int initialVisibleCards = scrollPanel!.Content.Controls.OfType<ModernCard>().Count(c => c.Visible);
+        Assert(initialVisibleCards == 9, "Expected 8 command cards + 1 fixedCard initially, found " + initialVisibleCards);
+
+        // Search for "贴图" -> CaptureAndPin and PinClipboardImage
+        searchBox.Text = "贴图";
+        Application.DoEvents();
+        int pinVisibleCards = scrollPanel.Content.Controls.OfType<ModernCard>().Count(c => c.Visible);
+        Assert(pinVisibleCards == 2, "Expected 2 visible cards for '贴图' (CaptureAndPin and PinClipboardImage), found " + pinVisibleCards);
+
+        // Clear search
+        searchBox.Clear();
+        Application.DoEvents();
+        int restoredCards = scrollPanel.Content.Controls.OfType<ModernCard>().Count(c => c.Visible);
+        Assert(restoredCards == 9, "Expected 9 visible cards after clearing search, found " + restoredCards);
+        form.Hide();
+    }
+
+    private static void TestSingleInstanceActivation()
+    {
+        string scope = "ZSnaper.Stability." + Guid.NewGuid().ToString("N");
+        using var primary = new SingleInstanceCoordinator(scope);
+        Assert(primary.IsPrimary, "The first coordinator did not own the instance scope.");
+
+        bool activated = false;
+        primary.ActivationRequested += () => activated = true;
+        primary.StartListening();
+
+        using var secondary = new SingleInstanceCoordinator(scope);
+        Assert(!secondary.IsPrimary, "A second coordinator incorrectly became primary.");
+        Assert(secondary.NotifyPrimaryInstance(), "The second coordinator could not notify the primary instance.");
+
+        var timeout = Stopwatch.StartNew();
+        while (!activated && timeout.Elapsed < TimeSpan.FromSeconds(3))
+        {
+            Application.DoEvents();
+            Thread.Sleep(10);
+        }
+
+        Assert(activated, "The primary instance did not receive the activation request.");
+        primary.Dispose();
+        Assert(secondary.TryBecomePrimary(), "A secondary instance could not take over after primary shutdown.");
+    }
+
+    private static void TestHotkeyRecordingLifecycle()
     {
         using var recorder = new HotkeyRecorder();
         int beginCount = 0;
         int endCount = 0;
-        recorder.BeginRecordingRequest = _ =>
+        recorder.BeginRecordingRequest = () =>
         {
             beginCount++;
             return new HotkeyChangeResult(true, string.Empty);
@@ -63,15 +216,18 @@ internal static class Program
             return new HotkeyChangeResult(true, string.Empty);
         };
 
-        recorder.StartRecording(forceBinding: false);
-        Assert(recorder.IsRecording && !recorder.IsForceRecording, "Normal hotkey recording did not start.");
+        recorder.StartRecording();
+        Assert(recorder.IsRecording, "Hotkey recording did not start.");
 
-        recorder.StartRecording(forceBinding: true);
-        Assert(recorder.IsRecording && recorder.IsForceRecording, "Recording did not switch from normal to force mode.");
-        Assert(beginCount == 2 && endCount == 1, "Switching recording mode did not close the previous session exactly once.");
+        recorder.StartRecording();
+        Assert(beginCount == 1 && endCount == 0, "Starting an active recorder created a duplicate recording session.");
 
         recorder.CancelExternalRecording();
-        Assert(!recorder.IsRecording && endCount == 2, "Cancelling force recording did not close the active session.");
+        Assert(!recorder.IsRecording && endCount == 1, "Cancelling recording did not close the active session.");
+
+        var occupied = new HotkeyChangeResult(false, "occupied", HotkeyChangeFailure.Occupied);
+        var registration = new HotkeyChangeResult(false, "failed", HotkeyChangeFailure.Registration);
+        Assert(occupied.CanForce && !registration.CanForce, "Force fallback was offered for the wrong failure type.");
     }
 
     private static void TestConfigurationNormalization()
@@ -98,6 +254,8 @@ internal static class Program
             AnnotationFontStyle = int.MaxValue,
             CaptureHotkey = "invalid",
             OcrHotkey = "Alt+Q",
+            TrayLeftClickAction = (TrayClickAction)999,
+            TrayMiddleClickAction = (TrayClickAction)999,
             UpdateCheckIntervalHours = 1,
             LastUpdateCheckAt = DateTimeOffset.UtcNow.AddDays(3),
             TrayIconCustomPalette = ["invalid", "#ffffff", "#FFFFFF"]
@@ -116,10 +274,149 @@ internal static class Program
         Assert(config.AnnotationPenWidth == 1f && config.AnnotationMosaicSize == 80f, "Annotation dimensions were not bounded.");
         Assert(config.AnnotationFontStyle == (int)FontStyle.Regular, "Invalid font style survived normalization.");
         Assert(config.CaptureHotkey == "Alt+Q" && config.OcrHotkey == "Alt+X", "Invalid or duplicate hotkeys were not repaired.");
+        Assert(
+            config.TrayLeftClickAction == TrayClickAction.OpenMainWindow &&
+            config.TrayMiddleClickAction == TrayClickAction.Capture,
+            "Invalid tray click actions were not repaired.");
         Assert(config.UpdateCheckIntervalHours == 24 && config.LastUpdateCheckAt is null, "Invalid update schedule survived normalization.");
         Assert(config.CaptureToolbarOrder.Distinct().Count() == CaptureToolbarDefaults.CreateItems().Count, "Toolbar order was not repaired.");
         Assert(config.CaptureToolbarItems.SequenceEqual([CaptureToolbarItem.Copy]), "Custom toolbar selection was not preserved safely.");
         Assert(config.TrayIconCustomPalette.SequenceEqual(["#FFFFFF"]), "Tray palette was not normalized and deduplicated.");
+    }
+
+    private static void TestUpdateChannelAndControl()
+    {
+        // 1. AppConfigSanitizer normalization
+        var configAlpha = new AppConfig { UpdateChannel = "Alpha" };
+        AppConfigSanitizer.Normalize(configAlpha);
+        Assert(configAlpha.UpdateChannel == "Beta", "Channel Alpha was not migrated to Beta.");
+
+        var configBeta = new AppConfig { UpdateChannel = "beta" };
+        AppConfigSanitizer.Normalize(configBeta);
+        Assert(configBeta.UpdateChannel == "Beta", "Channel beta was not normalized to Beta.");
+
+        var configRelease = new AppConfig { UpdateChannel = "release" };
+        AppConfigSanitizer.Normalize(configRelease);
+        Assert(configRelease.UpdateChannel == "Release", "Channel release was not normalized to Release.");
+
+        var configStable = new AppConfig { UpdateChannel = "Stable" };
+        AppConfigSanitizer.Normalize(configStable);
+        Assert(configStable.UpdateChannel == "Release", "Channel Stable was not normalized to Release.");
+
+        var configInvalid = new AppConfig { UpdateChannel = "invalid_channel_xyz" };
+        AppConfigSanitizer.Normalize(configInvalid);
+        Assert(configInvalid.UpdateChannel == "Beta", "Invalid channel was not defaulted to Beta.");
+
+        // 2. ChannelSegmentedControl mapping
+        Assert(ChannelSegmentedControl.ChannelToIndex("Release") == 0, "Release did not map to index 0.");
+        Assert(ChannelSegmentedControl.ChannelToIndex("stable") == 0, "stable did not map to index 0.");
+        Assert(ChannelSegmentedControl.ChannelToIndex("Beta") == 1, "Beta did not map to index 1.");
+        Assert(ChannelSegmentedControl.ChannelToIndex("Alpha") == 1, "Alpha did not map to index 1.");
+        Assert(ChannelSegmentedControl.ChannelToIndex(null) == 1, "null channel did not map to index 1.");
+
+        Assert(ChannelSegmentedControl.IndexToChannel(0) == "Release", "Index 0 did not map to Release.");
+        Assert(ChannelSegmentedControl.IndexToChannel(1) == "Beta", "Index 1 did not map to Beta.");
+
+        // 3. ChannelSegmentedControl UI properties
+        using var control = new ChannelSegmentedControl();
+        Assert(control.Width == 136 && control.Height == 28, "ChannelSegmentedControl size is incorrect.");
+
+        // 4. AppVersionInfo build channel
+        Assert(AppVersionInfo.BuildChannel == "Beta", "AppVersionInfo.BuildChannel should be Beta for prerelease build.");
+        Assert(AppVersionInfo.WelcomeChannelLabel == "BETA", "AppVersionInfo.WelcomeChannelLabel should be BETA.");
+        Assert(!AppVersionInfo.IsReleaseBuild, "Prerelease build was identified as Release.");
+    }
+
+    private static void TestToolbarItemOrderAndRepair()
+    {
+        // 1. Simulate the exact legacy config where enum shifted:
+        // Confirm (13) was saved between Cursor (6) and Ocr (7), and ScrollCapture (14) at the end.
+        var legacyConfig = new AppConfig
+        {
+            CaptureToolbarLayout = CaptureToolbarLayout.Custom,
+            CaptureToolbarOrder =
+            [
+                (CaptureToolbarItem)0, // Pen
+                (CaptureToolbarItem)1, // Arrow
+                (CaptureToolbarItem)2, // Text
+                (CaptureToolbarItem)3, // Mosaic
+                (CaptureToolbarItem)4, // Style
+                (CaptureToolbarItem)5, // Undo
+                (CaptureToolbarItem)6, // Cursor
+                (CaptureToolbarItem)13, // was ScrollCapture in old enum, now Confirm
+                (CaptureToolbarItem)7, // Ocr
+                (CaptureToolbarItem)8, // Copy
+                (CaptureToolbarItem)9, // Save
+                (CaptureToolbarItem)10, // Pin
+                (CaptureToolbarItem)11, // Reset
+                (CaptureToolbarItem)12, // Cancel
+                (CaptureToolbarItem)14  // ScrollCapture appended by defaults
+            ],
+            CaptureToolbarItems =
+            [
+                (CaptureToolbarItem)0,
+                (CaptureToolbarItem)1,
+                (CaptureToolbarItem)2,
+                (CaptureToolbarItem)3,
+                (CaptureToolbarItem)4,
+                (CaptureToolbarItem)5,
+                (CaptureToolbarItem)6,
+                (CaptureToolbarItem)13,
+                (CaptureToolbarItem)7,
+                (CaptureToolbarItem)8,
+                (CaptureToolbarItem)9,
+                (CaptureToolbarItem)10,
+                (CaptureToolbarItem)11,
+                (CaptureToolbarItem)12
+            ]
+        };
+
+        AppConfigSanitizer.Normalize(legacyConfig);
+
+        // Confirm must be at the very end (index 14)
+        Assert(
+            legacyConfig.CaptureToolbarOrder[^1] == CaptureToolbarItem.Confirm,
+            "Confirm was not moved to the end of CaptureToolbarOrder.");
+        Assert(
+            legacyConfig.CaptureToolbarOrder[^2] == CaptureToolbarItem.Cancel,
+            "Cancel was not placed immediately before Confirm in CaptureToolbarOrder.");
+
+        // ScrollCapture must be restored to its rightful place between Cursor and Ocr (index 7)
+        Assert(
+            legacyConfig.CaptureToolbarOrder[7] == CaptureToolbarItem.ScrollCapture,
+            "ScrollCapture was not restored to index 7 in CaptureToolbarOrder.");
+        Assert(
+            legacyConfig.CaptureToolbarOrder[6] == CaptureToolbarItem.Cursor &&
+            legacyConfig.CaptureToolbarOrder[8] == CaptureToolbarItem.Ocr,
+            "Cursor/Ocr neighborhood is incorrect in CaptureToolbarOrder.");
+
+        // CaptureToolbarItems must also have ScrollCapture at index 7 and Confirm at the end
+        Assert(
+            legacyConfig.CaptureToolbarItems[^1] == CaptureToolbarItem.Confirm,
+            "Confirm was not at the end of CaptureToolbarItems.");
+        Assert(
+            legacyConfig.CaptureToolbarItems[^2] == CaptureToolbarItem.Cancel,
+            "Cancel was not immediately before Confirm in CaptureToolbarItems.");
+        Assert(
+            legacyConfig.CaptureToolbarItems[7] == CaptureToolbarItem.ScrollCapture,
+            "ScrollCapture was not restored to index 7 in CaptureToolbarItems.");
+
+        // Layout was restored to Full because all 15 defaults are now present
+        Assert(
+            legacyConfig.CaptureToolbarLayout == CaptureToolbarLayout.Full,
+            "CaptureToolbarLayout was not restored to Full.");
+
+        // 2. Custom partial layout where Confirm was placed in the middle
+        var customConfig = new AppConfig
+        {
+            CaptureToolbarLayout = CaptureToolbarLayout.Custom,
+            CaptureToolbarItems = [CaptureToolbarItem.Confirm, CaptureToolbarItem.Pen, CaptureToolbarItem.Cancel],
+            CaptureToolbarOrder = CaptureToolbarDefaults.CreateItems()
+        };
+        AppConfigSanitizer.Normalize(customConfig);
+        Assert(
+            customConfig.CaptureToolbarItems.SequenceEqual([CaptureToolbarItem.Pen, CaptureToolbarItem.Cancel, CaptureToolbarItem.Confirm]),
+            "Confirm and Cancel were not positioned at the end of custom items.");
     }
 
     private static void TestAtomicConfigurationRecovery()
@@ -179,6 +476,22 @@ internal static class Program
         {
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    private static void TestPinnedImageRendering()
+    {
+        using var source = new Bitmap(320, 180);
+        using (Graphics graphics = Graphics.FromImage(source))
+        {
+            graphics.Clear(Color.FromArgb(24, 160, 220));
+        }
+
+        using var pinned = new PinnedImageForm(source, new Point(120, 120));
+        Assert(pinned.ClientSize.Width > 0 && pinned.ClientSize.Height > 0, "Pinned image window has invalid bounds.");
+        using var rendered = new Bitmap(pinned.ClientSize.Width, pinned.ClientSize.Height);
+        pinned.DrawToBitmap(rendered, new Rectangle(Point.Empty, rendered.Size));
+        Color center = rendered.GetPixel(rendered.Width / 2, rendered.Height / 2);
+        Assert(center.G > center.R && center.B > center.R, "Pinned image window did not render its image content.");
     }
 
     private static void Assert(bool condition, string message)
