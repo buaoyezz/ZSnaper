@@ -16,7 +16,18 @@ $artifactRoot = Join-Path $installerRoot "artifacts\$Version-$Runtime"
 $appPublish = Join-Path $workRoot "app-publish"
 $fullPublish = Join-Path $workRoot "full-installer-publish"
 $updatePublish = Join-Path $workRoot "update-installer-publish"
+$portablePublish = Join-Path $workRoot "portable-publish"
 $payloadZip = Join-Path $workRoot "application-payload.zip"
+
+if ([string]::IsNullOrWhiteSpace($BasePayloadDirectory)) {
+    $candidateBase = Join-Path $installerRoot ".work\base-$BaseVersion-$Runtime"
+    if (-not (Test-Path $candidateBase)) {
+        $candidateBase = Join-Path $installerRoot ".work\base-0.0.3-win-x64"
+    }
+    if (Test-Path $candidateBase -PathType Container) {
+        $BasePayloadDirectory = $candidateBase
+    }
+}
 
 function Invoke-Dotnet {
     param([string[]]$Arguments)
@@ -68,7 +79,7 @@ function Add-EmbeddedPayload {
 
 New-Item -ItemType Directory -Force -Path $workRoot, $artifactRoot | Out-Null
 if (-not $SkipBuild) {
-    foreach ($publishDirectory in @($appPublish, $fullPublish, $updatePublish)) {
+    foreach ($publishDirectory in @($appPublish, $fullPublish, $updatePublish, $portablePublish)) {
         if (Test-Path $publishDirectory) {
             Remove-Item -LiteralPath $publishDirectory -Recurse -Force
         }
@@ -83,6 +94,20 @@ if (-not $SkipBuild) {
         "-p:DebugType=None",
         "-p:DebugSymbols=false",
         "-o", $appPublish,
+        "--nologo"
+    )
+
+    Invoke-Dotnet @(
+        "publish", (Join-Path $repoRoot "ZSnaper.csproj"),
+        "-c", $Configuration,
+        "-r", $Runtime,
+        "--self-contained", "true",
+        "-p:PublishSingleFile=true",
+        "-p:IncludeNativeLibrariesForSelfExtract=true",
+        "-p:EnableCompressionInSingleFile=true",
+        "-p:DebugType=None",
+        "-p:DebugSymbols=false",
+        "-o", $portablePublish,
         "--nologo"
     )
 
@@ -131,6 +156,8 @@ $artifactNames = @(
     "ZSnaper-v$Version-$Runtime-Setup.exe",
     "ZSnaper-v$Version-$Runtime-Update.exe",
     "ZSnaper-v$Version-$Runtime-Update.zup",
+    "ZSnaper-v$Version-$Runtime-full.zip",
+    "ZSnaper-v$Version-$Runtime-portable.zip",
     "SHA256SUMS.txt"
 )
 foreach ($artifactName in $artifactNames) {
@@ -143,6 +170,15 @@ foreach ($artifactName in $artifactNames) {
 $setupPath = Join-Path $artifactRoot "ZSnaper-v$Version-$Runtime-Setup.exe"
 Copy-Item -LiteralPath $setupSource -Destination $setupPath -Force
 Add-EmbeddedPayload -InstallerPath $setupPath -PayloadPath $payloadZip
+
+$fullZipPath = Join-Path $artifactRoot "ZSnaper-v$Version-$Runtime-full.zip"
+Copy-Item -LiteralPath $payloadZip -Destination $fullZipPath -Force
+
+$portableSource = Join-Path $portablePublish "ZSnaper.exe"
+if (Test-Path $portableSource) {
+    $portableZipPath = Join-Path $artifactRoot "ZSnaper-v$Version-$Runtime-portable.zip"
+    Compress-Archive -Path $portableSource -DestinationPath $portableZipPath -CompressionLevel Optimal
+}
 
 $updateSource = Join-Path $updatePublish "ZSnaper.UpdateInstaller.exe"
 if (Test-Path $updateSource) {
