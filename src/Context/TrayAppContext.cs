@@ -37,6 +37,8 @@ public class TrayAppContext : ApplicationContext
     private readonly CancellationTokenSource _updateCancellation = new();
     private readonly System.Windows.Forms.Timer _updateTimer;
     private bool _updateCheckInProgress;
+    private bool _updateApplyInProgress;
+    private GitHubRelease? _pendingRelease;
     private DateTimeOffset? _lastUpdateAttemptAt;
     private bool _exitRequested;
     private bool _disposed;
@@ -69,7 +71,7 @@ public class TrayAppContext : ApplicationContext
         _mainForm.RequestHotkeyRecordingStart += _hotkeyService.BeginRecording;
         _mainForm.RequestHotkeyRecordingStop += _ => _hotkeyService.EndRecording();
         _mainForm.RequestUpdateCheck += () => _ = CheckForUpdatesAsync(manual: true);
-        _mainForm.RequestOpenUpdate += OpenUpdatePage;
+        _mainForm.RequestOpenUpdate += unused => _ = ApplyPendingUpdateAsync();
         _mainForm.Shown += (_, _) => CheckForUpdatesIfDue();
 
         _updateTimer = new System.Windows.Forms.Timer { Interval = 60_000 };
@@ -389,11 +391,12 @@ public class TrayAppContext : ApplicationContext
 
             if (result.IsSuccess && result.HasUpdate && result.LatestRelease is { } release)
             {
+                _pendingRelease = release;
                 string version = release.CleanVersion;
                 _mainForm.SetUpdateStatus(
-                    "打开下载页",
+                    "立即更新",
                     isBusy: false,
-                    release.HtmlUrl);
+                    release.TagName);
 
                 if (manual || ConfigService.Current.ShowNotification)
                 {
@@ -406,6 +409,7 @@ public class TrayAppContext : ApplicationContext
             }
             else if (result.IsSuccess)
             {
+                _pendingRelease = null;
                 _mainForm.SetUpdateStatus("已是最新", isBusy: false);
                 if (manual)
                 {
@@ -428,6 +432,41 @@ public class TrayAppContext : ApplicationContext
         finally
         {
             _updateCheckInProgress = false;
+        }
+    }
+
+    private async Task ApplyPendingUpdateAsync()
+    {
+        if (_updateApplyInProgress || _pendingRelease is null || _updateCancellation.IsCancellationRequested) return;
+        _updateApplyInProgress = true;
+        GitHubRelease release = _pendingRelease;
+        _mainForm.SetUpdateStatus("下载更新 0%", isBusy: true);
+        try
+        {
+            Progress<int> progress = new(percent =>
+                _mainForm.SetUpdateStatus($"下载更新 {percent}%", isBusy: true));
+            PreparedAppUpdate update = await new AppUpdateService().PrepareAsync(
+                release,
+                progress,
+                _updateCancellation.Token);
+            if (_updateCancellation.IsCancellationRequested) return;
+
+            _mainForm.SetUpdateStatus("正在安装…", isBusy: true);
+            AppUpdateService.Launch(update);
+            ExitApp();
+        }
+        catch (OperationCanceledException) when (_updateCancellation.IsCancellationRequested)
+        {
+            // Application shutdown cancelled the download.
+        }
+        catch (Exception exception)
+        {
+            _mainForm.SetUpdateStatus("重试更新", isBusy: false, release.TagName);
+            _tray.ShowBalloonTip(3500, "ZSnaper", "更新失败：" + exception.Message, ToolTipIcon.Warning);
+        }
+        finally
+        {
+            _updateApplyInProgress = false;
         }
     }
 

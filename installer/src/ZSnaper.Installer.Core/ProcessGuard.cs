@@ -6,9 +6,13 @@ public static class ProcessGuard
 {
     public static void EnsureClosed(string installDirectory, TimeSpan? timeout = null)
     {
-        string expectedExecutable = Path.Combine(
-            InstallerPaths.Normalize(installDirectory),
-            InstallerPaths.ProductExecutableName);
+        string expectedExecutable = InstallerPaths.GetProductExecutablePath(installDirectory);
+        string normalizedDirectory = InstallerPaths.Normalize(installDirectory);
+        string[] legacyExecutables =
+        [
+            Path.Combine(normalizedDirectory, "app", InstallerPaths.ProductExecutableName),
+            Path.Combine(normalizedDirectory, "runtime", InstallerPaths.ProductExecutableName)
+        ];
         TimeSpan waitTimeout = timeout ?? TimeSpan.FromSeconds(8);
 
         foreach (Process process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(InstallerPaths.ProductExecutableName)))
@@ -16,7 +20,8 @@ public static class ProcessGuard
             using (process)
             {
                 string? path = TryGetProcessPath(process);
-                if (!string.Equals(path, expectedExecutable, StringComparison.OrdinalIgnoreCase))
+                if (!string.Equals(path, expectedExecutable, StringComparison.OrdinalIgnoreCase) &&
+                    !legacyExecutables.Any(candidate => string.Equals(path, candidate, StringComparison.OrdinalIgnoreCase)))
                 {
                     continue;
                 }

@@ -17,6 +17,7 @@ $appPublish = Join-Path $workRoot "app-publish"
 $fullPublish = Join-Path $workRoot "full-installer-publish"
 $updatePublish = Join-Path $workRoot "update-installer-publish"
 $portablePublish = Join-Path $workRoot "portable-publish"
+$installedPayload = Join-Path $workRoot "installed-payload"
 $payloadZip = Join-Path $workRoot "application-payload.zip"
 
 if ([string]::IsNullOrWhiteSpace($BasePayloadDirectory)) {
@@ -79,7 +80,7 @@ function Add-EmbeddedPayload {
 
 New-Item -ItemType Directory -Force -Path $workRoot, $artifactRoot | Out-Null
 if (-not $SkipBuild) {
-    foreach ($publishDirectory in @($appPublish, $fullPublish, $updatePublish, $portablePublish)) {
+    foreach ($publishDirectory in @($appPublish, $fullPublish, $updatePublish, $portablePublish, $installedPayload)) {
         if (Test-Path $publishDirectory) {
             Remove-Item -LiteralPath $publishDirectory -Recurse -Force
         }
@@ -129,8 +130,10 @@ if (-not $SkipBuild) {
         "publish", (Join-Path $installerRoot "src\ZSnaper.UpdateInstaller\ZSnaper.UpdateInstaller.csproj"),
         "-c", $Configuration,
         "-r", $Runtime,
-        "--self-contained", "false",
+        "--self-contained", "true",
         "-p:PublishSingleFile=true",
+        "-p:IncludeNativeLibrariesForSelfExtract=true",
+        "-p:EnableCompressionInSingleFile=true",
         "-p:DebugType=None",
         "-p:DebugSymbols=false",
         "-o", $updatePublish,
@@ -141,12 +144,35 @@ if (-not $SkipBuild) {
 if (-not (Test-Path (Join-Path $appPublish "ZSnaper.exe"))) {
     throw "Application publish output is missing ZSnaper.exe."
 }
+$portableSource = Join-Path $portablePublish "ZSnaper.exe"
+$updateSource = Join-Path $updatePublish "ZSnaper.UpdateInstaller.exe"
+if (-not (Test-Path $portableSource) -or -not (Test-Path $updateSource)) {
+    throw "The installed single-file application or updater output is missing."
+}
+if (Test-Path $installedPayload) {
+    Remove-Item -LiteralPath $installedPayload -Recurse -Force
+}
+New-Item -ItemType Directory -Force -Path (Join-Path $installedPayload "langs"),(Join-Path $installedPayload "update") | Out-Null
+foreach ($file in Get-ChildItem -LiteralPath $appPublish -File) {
+    Copy-Item -LiteralPath $file.FullName -Destination $installedPayload -Force
+}
+foreach ($directory in Get-ChildItem -LiteralPath $appPublish -Directory) {
+    $destinationRoot = if ($directory.Name -match '^[a-z]{2}(-[A-Za-z]{2,4})?$') {
+        Join-Path $installedPayload "langs"
+    }
+    else {
+        $installedPayload
+    }
+    Copy-Item -LiteralPath $directory.FullName -Destination $destinationRoot -Recurse -Force
+}
+Copy-Item -LiteralPath $updateSource -Destination (Join-Path $installedPayload "update\Update.exe") -Force
+
 $payloadParent = Split-Path $payloadZip -Parent
 New-Item -ItemType Directory -Force -Path $payloadParent | Out-Null
 if (Test-Path $payloadZip) {
     Remove-Item -LiteralPath $payloadZip -Force
 }
-Compress-Archive -Path (Join-Path $appPublish "*") -DestinationPath $payloadZip -CompressionLevel Optimal
+Compress-Archive -Path (Join-Path $installedPayload "*") -DestinationPath $payloadZip -CompressionLevel Optimal
 
 $setupSource = Join-Path $fullPublish "ZSnaper.FullInstaller.exe"
 if (-not (Test-Path $setupSource)) {
@@ -172,15 +198,13 @@ Copy-Item -LiteralPath $setupSource -Destination $setupPath -Force
 Add-EmbeddedPayload -InstallerPath $setupPath -PayloadPath $payloadZip
 
 $fullZipPath = Join-Path $artifactRoot "ZSnaper-v$Version-$Runtime-full.zip"
-Copy-Item -LiteralPath $payloadZip -Destination $fullZipPath -Force
+Compress-Archive -Path (Join-Path $appPublish "*") -DestinationPath $fullZipPath -CompressionLevel Optimal
 
-$portableSource = Join-Path $portablePublish "ZSnaper.exe"
 if (Test-Path $portableSource) {
     $portableZipPath = Join-Path $artifactRoot "ZSnaper-v$Version-$Runtime-portable.zip"
     Compress-Archive -Path $portableSource -DestinationPath $portableZipPath -CompressionLevel Optimal
 }
 
-$updateSource = Join-Path $updatePublish "ZSnaper.UpdateInstaller.exe"
 if (Test-Path $updateSource) {
     Copy-Item -LiteralPath $updateSource -Destination (Join-Path $artifactRoot "ZSnaper-v$Version-$Runtime-Update.exe") -Force
 }
@@ -191,7 +215,7 @@ if (-not [string]::IsNullOrWhiteSpace($BasePayloadDirectory)) {
     }
 
     $baseMap = Get-RelativeFileMap $BasePayloadDirectory
-    $newMap = Get-RelativeFileMap $appPublish
+    $newMap = Get-RelativeFileMap $installedPayload
     $updateRoot = Join-Path $workRoot "update-content"
     if (Test-Path $updateRoot) {
         Remove-Item -LiteralPath $updateRoot -Recurse -Force
@@ -253,4 +277,9 @@ $hashLines = foreach ($artifact in Get-ChildItem -LiteralPath $artifactRoot -Fil
     "{0}  {1}" -f $hash.Hash.ToLowerInvariant(), $artifact.Name
 }
 $hashLines | Set-Content -LiteralPath (Join-Path $artifactRoot "SHA256SUMS.txt") -Encoding ASCII
+$savedBase = Join-Path $installerRoot ".work\base-$Version-$Runtime"
+if (Test-Path $savedBase) {
+    Remove-Item -LiteralPath $savedBase -Recurse -Force
+}
+Copy-Item -LiteralPath $installedPayload -Destination $savedBase -Recurse -Force
 Write-Host "Installer artifacts written to $artifactRoot"

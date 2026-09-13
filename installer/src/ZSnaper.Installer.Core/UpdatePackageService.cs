@@ -44,7 +44,8 @@ public sealed class UpdatePackageService
     public void Apply(
         string packagePath,
         InstallationInfo installation,
-        IProgress<InstallProgress>? progress = null)
+        IProgress<InstallProgress>? progress = null,
+        bool updateInstalledVersion = true)
     {
         UpdateManifest manifest = ReadManifest(packagePath);
         if (!string.IsNullOrWhiteSpace(manifest.From) &&
@@ -103,7 +104,11 @@ public sealed class UpdatePackageService
             }
 
             VerifyInstalledFiles(installation.InstallDirectory, manifest);
-            _installerService.UpdateInstalledVersion(manifest.To);
+            _installerService.OrganizeInstallation(installation.InstallDirectory, updateInstalledVersion);
+            if (updateInstalledVersion)
+            {
+                _installerService.UpdateInstalledVersion(manifest.To);
+            }
         }
         catch
         {

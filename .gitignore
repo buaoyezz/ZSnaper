@@ -43,6 +43,7 @@ recovery/
 
 ## Dotnet tooling
 .dotnet/
+.codex-build/
 project.lock.json
 project.fragment.lock.json
 artifacts/
@@ -55,4 +56,3 @@ ehthumbs_vista.db
 [Dd]esktop.ini
 $RECYCLE.BIN/
 .DS_Store
-

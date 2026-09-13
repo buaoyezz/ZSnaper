@@ -7,6 +7,8 @@ public static class InstallerPaths
     public const string ProductName = "ZSnaper";
     public const string ProductExecutableName = "ZSnaper.exe";
     public const string SetupExecutableName = "ZSnaper-Setup.exe";
+    public const string UpdateExecutableName = "Update.exe";
+    public const string SupportDirectoryName = "update";
     public const string InstallerRegistryPath = @"Software\ZSnaper\Installer";
     public const string UninstallRegistryPath =
         @"Software\Microsoft\Windows\CurrentVersion\Uninstall\ZSnaper";
@@ -26,6 +28,18 @@ public static class InstallerPaths
 
     public static string DesktopDirectory =>
         Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+
+    public static string GetProductExecutablePath(string installDirectory) =>
+        Path.Combine(Normalize(installDirectory), ProductExecutableName);
+
+    public static string GetSupportDirectory(string installDirectory) =>
+        Path.Combine(Normalize(installDirectory), SupportDirectoryName);
+
+    public static string GetSetupExecutablePath(string installDirectory) =>
+        Path.Combine(GetSupportDirectory(installDirectory), SetupExecutableName);
+
+    public static string GetUpdateExecutablePath(string installDirectory) =>
+        Path.Combine(GetSupportDirectory(installDirectory), UpdateExecutableName);
 
     public static string Normalize(string path) =>
         Path.GetFullPath(Environment.ExpandEnvironmentVariables(path.Trim()));

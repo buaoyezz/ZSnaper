@@ -761,7 +761,7 @@ internal sealed class InstallerForm : Form
         {
             string installDirectory = _installedDirectory;
             await Task.Run(() => _installerService.ApplyOptionalSettings(installDirectory, _desktopShortcut.Checked, _startMenuShortcut.Checked, _autoStart.Checked));
-            string applicationPath = Path.Combine(installDirectory, InstallerPaths.ProductExecutableName);
+            string applicationPath = InstallerPaths.GetProductExecutablePath(installDirectory);
             if (File.Exists(applicationPath))
             {
                 Process.Start(new ProcessStartInfo { FileName = applicationPath, WorkingDirectory = installDirectory, UseShellExecute = true });

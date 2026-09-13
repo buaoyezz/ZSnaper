@@ -283,6 +283,9 @@ public class OverlayForm : Form
                 _selection = Rectangle.Empty;
                 _hasSelection = false;
                 _dragMode = DragMode.NewSelection;
+                // The smart candidate restored its entire target to the undimmed screenshot.
+                // Repaint the full overlay once so none of that old target remains around the manual selection.
+                Invalidate();
             }
             else
             {
@@ -497,21 +500,7 @@ public class OverlayForm : Form
         ThemePalette palette = ThemeManager.Palette;
         bool isDark = palette.Mode == ThemeMode.Dark;
 
-        // 1. Outer subtle contrast halo (stays outside the selection to keep interior content 100% clean)
-        Color outerHaloColor = isDark
-            ? Color.FromArgb(75, 0, 0, 0)
-            : Color.FromArgb(60, 0, 0, 0);
-        using (var haloPen = new Pen(outerHaloColor, 1f) { LineJoin = LineJoin.Round })
-        {
-            graphics.DrawRectangle(
-                haloPen,
-                _selection.Left - 1,
-                _selection.Top - 1,
-                _selection.Width + 2,
-                _selection.Height + 2);
-        }
-
-        // 2. Main crisp accent border (2px smooth rounded stroke)
+        // Keep the selection edge crisp without darkening the pixels around it.
         using (var borderPen = new Pen(palette.AccentColor, 2f) { LineJoin = LineJoin.Round })
         {
             graphics.DrawRectangle(
@@ -522,7 +511,7 @@ public class OverlayForm : Form
                 _selection.Height);
         }
 
-        // 3. Inner subtle light reflection for depth (dark mode only, inside selection by 1px)
+        // Inner subtle light reflection for depth (dark mode only, inside selection by 1px)
         if (isDark && _selection.Width > 8 && _selection.Height > 8)
         {
             using var innerPen = new Pen(Color.FromArgb(24, 255, 255, 255), 1f) { LineJoin = LineJoin.Round };
@@ -1870,20 +1859,6 @@ public class OverlayForm : Form
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
         graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
         ThemePalette palette = ThemeManager.Palette;
-        bool isDark = palette.Mode == ThemeMode.Dark;
-
-        Color outerHaloColor = isDark
-            ? Color.FromArgb(75, 0, 0, 0)
-            : Color.FromArgb(60, 0, 0, 0);
-        using (var haloPen = new Pen(outerHaloColor, 1f) { LineJoin = LineJoin.Round })
-        {
-            graphics.DrawRectangle(
-                haloPen,
-                bounds.Left - 1,
-                bounds.Top - 1,
-                bounds.Width + 2,
-                bounds.Height + 2);
-        }
 
         using (var borderPen = new Pen(palette.AccentColor, 2f) { LineJoin = LineJoin.Round })
         {

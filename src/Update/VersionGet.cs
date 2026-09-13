@@ -107,7 +107,7 @@ public class UpdateCheckResult
 /// </summary>
 public static class VersionGet
 {
-    private const string RepoOwner = "buaoyezz"; 
+    private const string RepoOwner = "zzbuaoye-love";
     private const string RepoName = "ZSnaper";
     private const string ApiBaseUrl = $"https://api.github.com/repos/{RepoOwner}/{RepoName}";
 

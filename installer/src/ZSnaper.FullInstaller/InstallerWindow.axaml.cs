@@ -310,7 +310,7 @@ internal sealed partial class InstallerWindow : Window
 
         try
         {
-            string appExe = Path.Combine(_installedDirectory, InstallerPaths.ProductExecutableName);
+            string appExe = InstallerPaths.GetProductExecutablePath(_installedDirectory);
             if (File.Exists(appExe))
             {
                 Process.Start(new ProcessStartInfo

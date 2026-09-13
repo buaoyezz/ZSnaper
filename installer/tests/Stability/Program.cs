@@ -1,20 +1,30 @@
 using System.Text.Json;
 using System.Diagnostics;
+using System.Reflection;
 using ZSnaper.Controls;
 using ZSnaper.Forms;
 using ZSnaper.Helpers;
 using ZSnaper.Models;
 using ZSnaper.Services;
+using ZSnaper.Update;
 
 namespace ZSnaper.Stability;
 
 internal static class Program
 {
     [STAThread]
-    private static int Main()
+    private static int Main(string[] args)
     {
+        if (args.Contains("--live-update-download", StringComparer.OrdinalIgnoreCase))
+        {
+            TestLiveUpdateDownload();
+            return 0;
+        }
+
         TestConfigurationNormalization();
         TestUpdateChannelAndControl();
+        TestUpdateAssetSelectionAndChecksums();
+        TestInstalledLanguagePackResolution();
         TestToolbarItemOrderAndRepair();
         TestForceHotkeyValidation();
         TestExpandedHotkeyCatalog();
@@ -25,6 +35,7 @@ internal static class Program
         TestSingleInstanceActivation();
         TestAtomicConfigurationRecovery();
         TestCaptureResourceGuards();
+        TestSmartSelectionDragInvalidation();
         TestPinnedImageRendering();
         Console.WriteLine("Application stability tests passed.");
         return 0;
@@ -494,6 +505,102 @@ internal static class Program
         pinned.DrawToBitmap(rendered, new Rectangle(Point.Empty, rendered.Size));
         Color center = rendered.GetPixel(rendered.Width / 2, rendered.Height / 2);
         Assert(center.G > center.R && center.B > center.R, "Pinned image window did not render its image content.");
+    }
+
+    private static void TestUpdateAssetSelectionAndChecksums()
+    {
+        GitHubRelease release = new()
+        {
+            TagName = "v1.2.3",
+            Assets =
+            [
+                new GitHubReleaseAsset { Name = "ZSnaper-v1.2.3-win-x64-Update.zup", DownloadUrl = "https://example.test/app.zup" },
+                new GitHubReleaseAsset { Name = "ZSnaper-v1.2.3-win-x64-Update.exe", DownloadUrl = "https://example.test/update.exe" },
+                new GitHubReleaseAsset { Name = "SHA256SUMS.txt", DownloadUrl = "https://example.test/hashes" }
+            ]
+        };
+        Assert(AppUpdateService.SelectPackageAsset(release).Name.EndsWith(".zup"), "The app did not select the .zup update package.");
+        Assert(AppUpdateService.SelectUpdaterAsset(release).Name.EndsWith("Update.exe"), "The app did not select the updater executable.");
+        Assert(AppUpdateService.SelectChecksumAsset(release).Name == "SHA256SUMS.txt", "The app did not select the checksum list.");
+
+        const string hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        IReadOnlyDictionary<string, string> parsed = AppUpdateService.ParseChecksums($"{hash}  package.zup\r\n");
+        Assert(parsed.TryGetValue("package.zup", out string? value) && value == hash, "SHA256SUMS parsing failed.");
+    }
+
+    private static void TestInstalledLanguagePackResolution()
+    {
+        string applicationDirectory = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
+        string installDirectory = Directory.Exists(Path.Combine(applicationDirectory, "langs"))
+            ? applicationDirectory
+            : Directory.GetParent(applicationDirectory)?.FullName ?? applicationDirectory;
+        string languageAssembly = Path.Combine(installDirectory, "langs", "zh-Hans", "System.Windows.Forms.resources.dll");
+        if (!File.Exists(languageAssembly))
+        {
+            return;
+        }
+
+        Type resolver = typeof(AppVersionInfo).Assembly.GetType("ZSnaper.Helpers.SatelliteAssemblyResolver", throwOnError: true)!;
+        MethodInfo method = resolver.GetMethod("ResolveSatelliteAssembly", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new MissingMethodException(resolver.FullName, "ResolveSatelliteAssembly");
+        AssemblyName name = new("System.Windows.Forms.resources") { CultureName = "zh-Hans" };
+        var context = new System.Runtime.Loader.AssemblyLoadContext("LanguagePackTest", isCollectible: true);
+        try
+        {
+            Assembly? loaded = method.Invoke(null, [context, name]) as Assembly;
+            Assert(
+                loaded is not null && string.Equals(loaded.Location, languageAssembly, StringComparison.OrdinalIgnoreCase),
+                $"The installed language pack was not loaded from the langs directory. Expected={languageAssembly}; Actual={loaded?.Location ?? "<null>"}.");
+        }
+        finally
+        {
+            context.Unload();
+        }
+    }
+
+    private static void TestLiveUpdateDownload()
+    {
+        GitHubRelease release = VersionGet.GetLatestReleaseAsync(includePrerelease: true).GetAwaiter().GetResult()
+            ?? throw new InvalidOperationException("No current GitHub release was found.");
+        PreparedAppUpdate update = new AppUpdateService().PrepareAsync(release).GetAwaiter().GetResult();
+        Assert(File.Exists(update.PackagePath), "The live .zup package was not downloaded.");
+        Assert(File.Exists(update.UpdaterPath), "The live updater was not downloaded.");
+        Console.WriteLine($"Live update download passed for {release.TagName}.");
+    }
+
+    private static void TestSmartSelectionDragInvalidation()
+    {
+        using var overlay = new OverlayFormProbe { ClientSize = new Size(240, 180) };
+        _ = overlay.Handle;
+
+        var smartTarget = new SmartSelectionTarget(
+            nint.Zero,
+            new Rectangle(10, 10, 220, 160),
+            "Target");
+        SetOverlayField(overlay, "_pendingSmartClick", true);
+        SetOverlayField(overlay, "_start", new Point(20, 20));
+        SetOverlayField(overlay, "_smartTarget", smartTarget);
+        SetOverlayField(overlay, "_smartFastTarget", smartTarget);
+
+        var invalidatedBounds = new List<Rectangle>();
+        overlay.Invalidated += (_, args) => invalidatedBounds.Add(args.InvalidRect);
+        overlay.RaiseMouseMove(new MouseEventArgs(MouseButtons.Left, 0, 120, 100, 0));
+
+        Assert(
+            invalidatedBounds.Any(bounds => bounds == overlay.ClientRectangle),
+            "Dragging away from a smart target did not invalidate the full overlay, leaving stale undimmed pixels around the manual selection.");
+    }
+
+    private static void SetOverlayField(OverlayForm overlay, string name, object value)
+    {
+        FieldInfo field = typeof(OverlayForm).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new MissingFieldException(typeof(OverlayForm).FullName, name);
+        field.SetValue(overlay, value);
+    }
+
+    private sealed class OverlayFormProbe : OverlayForm
+    {
+        public void RaiseMouseMove(MouseEventArgs args) => base.OnMouseMove(args);
     }
 
     private static void Assert(bool condition, string message)

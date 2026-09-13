@@ -22,9 +22,20 @@ internal static class Program
         string extracted = PayloadArchive.ExtractEmbeddedPayload(setupPath);
         try
         {
-            if (!File.Exists(Path.Combine(extracted, InstallerPaths.ProductExecutableName)))
+            if (!File.Exists(InstallerPaths.GetProductExecutablePath(extracted)))
             {
                 throw new InvalidDataException("The embedded payload does not contain ZSnaper.exe.");
+            }
+
+            if (!File.Exists(InstallerPaths.GetUpdateExecutablePath(extracted)))
+            {
+                throw new InvalidDataException("The embedded payload does not contain update\\Update.exe.");
+            }
+
+            if (!Directory.Exists(Path.Combine(extracted, "langs", "zh-Hans")) ||
+                Directory.Exists(Path.Combine(extracted, "zh-Hans")))
+            {
+                throw new InvalidDataException("The embedded language packs are not organized under langs.");
             }
         }
         finally

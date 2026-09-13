@@ -32,16 +32,28 @@ public sealed class InstallerService
         }
 
         string normalizedDirectory = InstallerPaths.Normalize(installDirectory);
-        if (!File.Exists(Path.Combine(normalizedDirectory, InstallerPaths.ProductExecutableName)))
+        string executablePath = InstallerPaths.GetProductExecutablePath(normalizedDirectory);
+        if (!File.Exists(executablePath))
         {
-            return null;
+            executablePath = new[]
+                {
+                    Path.Combine(normalizedDirectory, "app", InstallerPaths.ProductExecutableName),
+                    Path.Combine(normalizedDirectory, "runtime", InstallerPaths.ProductExecutableName)
+                }
+                .FirstOrDefault(File.Exists) ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(executablePath))
+            {
+                return null;
+            }
         }
 
         return new InstallationInfo(
             normalizedDirectory,
             key?.GetValue("Version") as string ?? string.Empty,
-            Path.Combine(normalizedDirectory, InstallerPaths.ProductExecutableName),
-            Path.Combine(normalizedDirectory, InstallerPaths.SetupExecutableName));
+            executablePath,
+            File.Exists(InstallerPaths.GetSetupExecutablePath(normalizedDirectory))
+                ? InstallerPaths.GetSetupExecutablePath(normalizedDirectory)
+                : Path.Combine(normalizedDirectory, InstallerPaths.SetupExecutableName));
     }
 
     public void ApplyOptionalSettings(
@@ -52,7 +64,7 @@ public sealed class InstallerService
     {
         string normalizedDirectory = InstallerPaths.Normalize(installDirectory);
         if (!IsRegisteredInstall(normalizedDirectory) ||
-            !File.Exists(Path.Combine(normalizedDirectory, InstallerPaths.ProductExecutableName)))
+            !File.Exists(InstallerPaths.GetProductExecutablePath(normalizedDirectory)))
         {
             throw new InvalidOperationException("The target directory is not a registered ZSnaper installation.");
         }
@@ -75,7 +87,7 @@ public sealed class InstallerService
         IProgress<InstallProgress>? progress = null)
     {
         if (!Directory.Exists(payloadDirectory) ||
-            !File.Exists(Path.Combine(payloadDirectory, InstallerPaths.ProductExecutableName)))
+            !File.Exists(InstallerPaths.GetProductExecutablePath(payloadDirectory)))
         {
             throw new DirectoryNotFoundException("The payload does not contain ZSnaper.exe.");
         }
@@ -97,7 +109,8 @@ public sealed class InstallerService
             Directory.CreateDirectory(stagingDirectory);
             CopyDirectory(payloadDirectory, stagingDirectory, progress);
 
-            string stagedSetup = Path.Combine(stagingDirectory, InstallerPaths.SetupExecutableName);
+            string stagedSetup = InstallerPaths.GetSetupExecutablePath(stagingDirectory);
+            Directory.CreateDirectory(Path.GetDirectoryName(stagedSetup)!);
             File.Copy(installerExecutable, stagedSetup, overwrite: true);
 
             if (!Directory.Exists(installDirectory))
@@ -114,6 +127,7 @@ public sealed class InstallerService
             }
 
             WriteInstallMetadata(installDirectory, options.Version);
+            OrganizeInstallation(installDirectory);
             if (options.ApplyOptionalSettings)
             {
                 ConfigureAutoStart(installDirectory, options.EnableAutoStart);
@@ -168,22 +182,109 @@ public sealed class InstallerService
 
         using RegistryKey uninstall = Registry.CurrentUser.CreateSubKey(InstallerPaths.UninstallRegistryPath, writable: true)
             ?? throw new InvalidOperationException("Unable to write uninstall metadata.");
-        string setupPath = Path.Combine(installDirectory, InstallerPaths.SetupExecutableName);
+        string setupPath = InstallerPaths.GetSetupExecutablePath(installDirectory);
         uninstall.SetValue("DisplayName", InstallerPaths.ProductName, RegistryValueKind.String);
         uninstall.SetValue("DisplayVersion", version, RegistryValueKind.String);
         uninstall.SetValue("Publisher", "ZZBuAoYe", RegistryValueKind.String);
         uninstall.SetValue("InstallLocation", installDirectory, RegistryValueKind.String);
-        uninstall.SetValue("DisplayIcon", Path.Combine(installDirectory, InstallerPaths.ProductExecutableName), RegistryValueKind.String);
+        uninstall.SetValue("DisplayIcon", InstallerPaths.GetProductExecutablePath(installDirectory), RegistryValueKind.String);
         uninstall.SetValue("UninstallString", $"\"{setupPath}\" --uninstall", RegistryValueKind.String);
         uninstall.SetValue("NoModify", 1, RegistryValueKind.DWord);
         uninstall.SetValue("NoRepair", 0, RegistryValueKind.DWord);
+    }
+
+    public void OrganizeInstallation(string installDirectory, bool updateRegistry = true)
+    {
+        string normalizedDirectory = InstallerPaths.Normalize(installDirectory);
+        if (!InstallerPaths.IsOwnedPath(normalizedDirectory, normalizedDirectory) ||
+            !File.Exists(InstallerPaths.GetProductExecutablePath(normalizedDirectory)))
+        {
+            throw new InvalidOperationException("The target is not a valid ZSnaper installation.");
+        }
+
+        string supportDirectory = InstallerPaths.GetSupportDirectory(normalizedDirectory);
+        Directory.CreateDirectory(supportDirectory);
+        string organizedSetup = InstallerPaths.GetSetupExecutablePath(normalizedDirectory);
+        string[] legacySetups =
+        [
+            Path.Combine(normalizedDirectory, InstallerPaths.SetupExecutableName),
+            Path.Combine(normalizedDirectory, ".installer", InstallerPaths.SetupExecutableName)
+        ];
+        foreach (string legacySetup in legacySetups.Where(File.Exists))
+        {
+            File.Copy(legacySetup, organizedSetup, overwrite: true);
+            if (!string.Equals(
+                    InstallerPaths.Normalize(Environment.ProcessPath ?? string.Empty),
+                    InstallerPaths.Normalize(legacySetup),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                File.Delete(legacySetup);
+            }
+        }
+
+        PruneEmptyDirectories(normalizedDirectory);
+        if (updateRegistry && IsRegisteredInstall(normalizedDirectory))
+        {
+            MigrateLaunchEntries(normalizedDirectory);
+            using RegistryKey? key = InstallerPaths.OpenInstallerKey(writable: false);
+            WriteInstallMetadata(normalizedDirectory, key?.GetValue("Version") as string ?? string.Empty);
+        }
+    }
+
+    private static void MigrateLaunchEntries(string installDirectory)
+    {
+        string executablePath = InstallerPaths.GetProductExecutablePath(installDirectory);
+        string[] legacyExecutables =
+        [
+            Path.Combine(installDirectory, "app", InstallerPaths.ProductExecutableName),
+            Path.Combine(installDirectory, "runtime", InstallerPaths.ProductExecutableName)
+        ];
+
+        using (RegistryKey? startup = Registry.CurrentUser.OpenSubKey(InstallerPaths.StartupRegistryPath, writable: true))
+        {
+            string? value = startup?.GetValue(InstallerPaths.StartupValueName) as string;
+            if (value is not null && legacyExecutables.Any(path => value.Contains(path, StringComparison.OrdinalIgnoreCase)))
+            {
+                startup?.SetValue(InstallerPaths.StartupValueName, $"\"{executablePath}\" --startup", RegistryValueKind.String);
+            }
+        }
+
+        foreach (string shortcutPath in new[]
+                 {
+                     Path.Combine(InstallerPaths.StartMenuDirectory, InstallerPaths.ProductName + ".lnk"),
+                     Path.Combine(InstallerPaths.DesktopDirectory, InstallerPaths.ProductName + ".lnk")
+                 })
+        {
+            bool existed = File.Exists(shortcutPath);
+            foreach (string legacyExecutable in legacyExecutables)
+            {
+                ShortcutService.DeleteIfOwned(shortcutPath, legacyExecutable);
+            }
+            if (existed && !File.Exists(shortcutPath))
+            {
+                ShortcutService.Create(shortcutPath, executablePath, description: InstallerPaths.ProductName);
+            }
+        }
+    }
+
+    public static void PruneEmptyDirectories(string installDirectory)
+    {
+        string root = InstallerPaths.Normalize(installDirectory);
+        foreach (string directory in Directory.GetDirectories(root, "*", SearchOption.AllDirectories)
+                     .OrderByDescending(path => path.Length))
+        {
+            if (InstallerPaths.IsOwnedPath(directory, root) && !Directory.EnumerateFileSystemEntries(directory).Any())
+            {
+                Directory.Delete(directory, recursive: false);
+            }
+        }
     }
 
     private static void ConfigureAutoStart(string installDirectory, bool enabled)
     {
         using RegistryKey key = Registry.CurrentUser.CreateSubKey(InstallerPaths.StartupRegistryPath, writable: true)
             ?? throw new InvalidOperationException("Unable to write startup settings.");
-        string executablePath = Path.Combine(installDirectory, InstallerPaths.ProductExecutableName);
+        string executablePath = InstallerPaths.GetProductExecutablePath(installDirectory);
         if (enabled)
         {
             key.SetValue(InstallerPaths.StartupValueName, $"\"{executablePath}\" --startup", RegistryValueKind.String);
@@ -198,7 +299,7 @@ public sealed class InstallerService
     {
         using RegistryKey? key = Registry.CurrentUser.OpenSubKey(InstallerPaths.StartupRegistryPath, writable: true);
         string? value = key?.GetValue(InstallerPaths.StartupValueName) as string;
-        string expectedExecutable = Path.Combine(InstallerPaths.Normalize(installDirectory), InstallerPaths.ProductExecutableName);
+        string expectedExecutable = InstallerPaths.GetProductExecutablePath(installDirectory);
         if (value is not null && value.Contains(expectedExecutable, StringComparison.OrdinalIgnoreCase))
         {
             key?.DeleteValue(InstallerPaths.StartupValueName, throwOnMissingValue: false);
@@ -207,7 +308,7 @@ public sealed class InstallerService
 
     private static void ConfigureShortcuts(string installDirectory, InstallOptions options)
     {
-        string executablePath = Path.Combine(installDirectory, InstallerPaths.ProductExecutableName);
+        string executablePath = InstallerPaths.GetProductExecutablePath(installDirectory);
         string startMenuShortcut = Path.Combine(InstallerPaths.StartMenuDirectory, InstallerPaths.ProductName + ".lnk");
         string desktopShortcut = Path.Combine(InstallerPaths.DesktopDirectory, InstallerPaths.ProductName + ".lnk");
 
@@ -232,7 +333,7 @@ public sealed class InstallerService
 
     private static void RemoveShortcuts(string installDirectory)
     {
-        string executablePath = Path.Combine(InstallerPaths.Normalize(installDirectory), InstallerPaths.ProductExecutableName);
+        string executablePath = InstallerPaths.GetProductExecutablePath(installDirectory);
         string startMenuShortcut = Path.Combine(InstallerPaths.StartMenuDirectory, InstallerPaths.ProductName + ".lnk");
         string desktopShortcut = Path.Combine(InstallerPaths.DesktopDirectory, InstallerPaths.ProductName + ".lnk");
         ShortcutService.DeleteIfOwned(startMenuShortcut, executablePath);
